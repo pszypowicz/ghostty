@@ -306,6 +306,7 @@ const DerivedConfig = struct {
     original_font_size: f32,
     keybind: configpkg.Keybinds,
     gesture: configpkg.Gesturebinds,
+    gesture_pinch_step: f64,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -386,6 +387,7 @@ const DerivedConfig = struct {
             .original_font_size = config.@"font-size",
             .keybind = try config.keybind.clone(alloc),
             .gesture = try config.gesture.clone(alloc),
+            .gesture_pinch_step = config.@"gesture-pinch-step",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3433,12 +3435,6 @@ const ScrollAmount = struct {
 /// "Natural scrolling" is a macOS term for inverting the scroll direction.
 /// This should be handled by the apprt implementation. At this layer,
 /// negative is always down, left.
-/// The amount of accumulated pinch magnification that corresponds to one
-/// discrete gesture step (e.g. one font size increment). macOS reports
-/// `NSEvent.magnification` deltas that sum to roughly the fractional size
-/// change, so ~0.1 is about one step per moderate pinch.
-const pinch_step: f64 = 0.1;
-
 /// Called for trackpad/touchpad gestures. Continuous gestures are accumulated
 /// into discrete steps here and dispatched to the configured `gesture`
 /// bindings, reusing the same action machinery as keybinds.
@@ -3472,15 +3468,18 @@ fn pinchGesture(
         },
 
         .changed => {
+            // The step is clamped in config finalization, but guard here too
+            // so a non-positive value can never spin this loop forever.
+            const step = @max(0.001, self.config.gesture_pinch_step);
             self.gesture.pinch_accumulator += amount;
-            while (@abs(self.gesture.pinch_accumulator) >= pinch_step) {
+            while (@abs(self.gesture.pinch_accumulator) >= step) {
                 // Consume one step, keeping the remainder so that a fast pinch
                 // triggers multiple steps in a single event.
                 const out = self.gesture.pinch_accumulator > 0;
                 if (out) {
-                    self.gesture.pinch_accumulator -= pinch_step;
+                    self.gesture.pinch_accumulator -= step;
                 } else {
-                    self.gesture.pinch_accumulator += pinch_step;
+                    self.gesture.pinch_accumulator += step;
                 }
 
                 const g: input.Binding.Gesture =

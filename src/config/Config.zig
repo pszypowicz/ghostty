@@ -1931,6 +1931,21 @@ keybind: Keybinds = .{},
 /// Trackpad gestures are currently only supported on macOS.
 gesture: Gesturebinds = .{},
 
+/// The amount of trackpad magnification that must accumulate before a pinch
+/// gesture binding fires one step.
+///
+/// A pinch is a continuous gesture: macOS reports incremental magnification
+/// deltas that sum to roughly the fractional size change, and each time they
+/// accumulate to this value one step of the bound action is performed. The
+/// default of `0.1` is about one step per moderate pinch. A smaller value
+/// makes pinch more sensitive (more steps per pinch); a larger value makes it
+/// less sensitive. Values at or below zero are clamped to a small positive
+/// minimum.
+///
+/// This only has an effect on platforms that support trackpad gestures
+/// (currently macOS).
+@"gesture-pinch-step": f64 = 0.1,
+
 /// Remap modifier keys within Ghostty. This allows you to swap or reassign
 /// modifier keys at the application level without affecting system-wide
 /// settings.
@@ -4744,6 +4759,10 @@ pub fn finalize(self: *Config) !void {
     // Clamp our mouse scroll multiplier
     self.@"mouse-scroll-multiplier".precision = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".precision));
     self.@"mouse-scroll-multiplier".discrete = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".discrete));
+
+    // Clamp our gesture pinch step to a small positive minimum. A zero or
+    // negative value would cause the pinch accumulator loop to never terminate.
+    self.@"gesture-pinch-step" = @max(0.001, self.@"gesture-pinch-step");
 
     // Clamp our split opacity
     self.@"unfocused-split-opacity" = @min(1.0, @max(0.15, self.@"unfocused-split-opacity"));
