@@ -854,6 +854,18 @@ pub const Surface = struct {
         };
     }
 
+    pub fn gestureCallback(
+        self: *Surface,
+        kind: input.Binding.GestureKind,
+        amount: f64,
+        phase: input.Binding.GesturePhase,
+    ) void {
+        self.core_surface.gestureCallback(kind, amount, phase) catch |err| {
+            log.err("error in gesture callback err={}", .{err});
+            return;
+        };
+    }
+
     pub fn cursorPosCallback(
         self: *Surface,
         x: f64,
@@ -1903,6 +1915,30 @@ pub const CAPI = struct {
         };
 
         surface.mousePressureCallback(stage, pressure);
+    }
+
+    export fn ghostty_surface_gesture(
+        surface: *Surface,
+        kind_raw: c_int,
+        amount: f64,
+        phase_raw: c_int,
+    ) void {
+        const kind = std.meta.intToEnum(
+            input.Binding.GestureKind,
+            kind_raw,
+        ) catch {
+            log.warn("invalid gesture kind value={}", .{kind_raw});
+            return;
+        };
+        const phase = std.meta.intToEnum(
+            input.Binding.GesturePhase,
+            phase_raw,
+        ) catch {
+            log.warn("invalid gesture phase value={}", .{phase_raw});
+            return;
+        };
+
+        surface.gestureCallback(kind, amount, phase);
     }
 
     export fn ghostty_surface_ime_point(

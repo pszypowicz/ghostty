@@ -35,6 +35,7 @@ const help_strings = @import("help_strings");
 pub const Command = @import("command.zig").Command;
 const RepeatableReadableIO = @import("io.zig").RepeatableReadableIO;
 const RepeatableStringMap = @import("RepeatableStringMap.zig");
+const Gesturebinds = @import("Gesturebinds.zig");
 pub const Path = @import("path.zig").Path;
 pub const RepeatablePath = @import("path.zig").RepeatablePath;
 const ClipboardCodepointMap = @import("ClipboardCodepointMap.zig");
@@ -1899,6 +1900,36 @@ class: ?[:0]const u8 = null,
 ///
 /// Key tables are available since Ghostty 1.3.0.
 keybind: Keybinds = .{},
+
+/// Bind a trackpad gesture to a keybind action.
+///
+/// The syntax is `gesture = <gesture> = <action>`, where `<gesture>` is one of
+/// the recognized gestures below and `<action>` is any keybind action (the
+/// same actions available to `keybind`).
+///
+/// Recognized gestures:
+///
+///   * `pinch-in` - Trackpad pinch closed (zoom out).
+///   * `pinch-out` - Trackpad pinch open (zoom in).
+///
+/// By default, pinch is bound to font size (`pinch-out` increases,
+/// `pinch-in` decreases), matching the conventional behavior of other
+/// terminals.
+///
+/// Because a pinch is a continuous gesture, its action is triggered once per
+/// discrete step as you pinch. For a discrete action (e.g. one that opens a
+/// menu or sends a key sequence), prefix the action with `once:` so it fires a
+/// single time per gesture instead of repeatedly. For example, to open a tmux
+/// session list with a pinch:
+///
+///     gesture = pinch-in = once:text:\x02s
+///
+/// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
+/// `gesture =` alone resets all gesture bindings to the defaults, and
+/// `gesture = clear` removes all gesture bindings.
+///
+/// Trackpad gestures are currently only supported on macOS.
+gesture: Gesturebinds = .{},
 
 /// Remap modifier keys within Ghostty. This allows you to swap or reassign
 /// modifier keys at the application level without affecting system-wide
@@ -3905,6 +3936,9 @@ pub fn default(alloc_gpa: Allocator) Allocator.Error!Config {
 
     // Add our default keybindings
     try result.keybind.init(alloc);
+
+    // Add our default gesture bindings
+    try result.gesture.init(alloc);
 
     // Add our default command palette entries
     try result.@"command-palette-entry".init(alloc);

@@ -155,6 +155,22 @@ extension Ghostty {
                 event.mods.cScrollMods)
         }
 
+        /// Send a trackpad gesture event to the terminal.
+        ///
+        /// Continuous gestures (e.g. pinch) are accumulated by the core and
+        /// converted into discrete steps that map to configured `gesture`
+        /// bindings.
+        ///
+        /// - Parameter event: The gesture event to send to the terminal
+        @MainActor
+        func sendGesture(_ event: Input.GestureEvent) {
+            ghostty_surface_gesture(
+                surface,
+                event.kind.cGesture,
+                event.amount,
+                event.phase.cPhase)
+        }
+
         /// Perform a keybinding action.
         ///
         /// The action can be any valid keybind parameter. e.g. `keybind = goto_tab:4`

@@ -1055,6 +1055,15 @@ extension Ghostty {
             surfaceModel.sendMouseScroll(scrollEvent)
         }
 
+        override func magnify(with event: NSEvent) {
+            guard let surfaceModel else { return }
+            guard let phase = Ghostty.Input.GestureEvent.Phase(event.phase) else { return }
+            surfaceModel.sendGesture(.init(
+                kind: .pinch,
+                amount: event.magnification,
+                phase: phase))
+        }
+
         override func pressureChange(with event: NSEvent) {
             guard let surface = self.surface else { return }
 

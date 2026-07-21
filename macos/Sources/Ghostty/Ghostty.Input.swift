@@ -537,6 +537,61 @@ extension Ghostty.Input.Momentum {
 }
 #endif
 
+// MARK: Ghostty.Input.GestureEvent
+
+extension Ghostty.Input {
+    /// A trackpad/touchpad gesture event (e.g. pinch).
+    struct GestureEvent {
+        let kind: Kind
+        let amount: Double
+        let phase: Phase
+
+        /// `ghostty_input_gesture_e` - The family of gesture.
+        enum Kind {
+            case pinch
+
+            var cGesture: ghostty_input_gesture_e {
+                switch self {
+                case .pinch: GHOSTTY_GESTURE_PINCH
+                }
+            }
+        }
+
+        /// `ghostty_input_gesture_phase_e` - The phase of a continuous gesture.
+        enum Phase {
+            case began
+            case changed
+            case ended
+            case cancelled
+
+            var cPhase: ghostty_input_gesture_phase_e {
+                switch self {
+                case .began: GHOSTTY_GESTURE_PHASE_BEGAN
+                case .changed: GHOSTTY_GESTURE_PHASE_CHANGED
+                case .ended: GHOSTTY_GESTURE_PHASE_ENDED
+                case .cancelled: GHOSTTY_GESTURE_PHASE_CANCELLED
+                }
+            }
+        }
+    }
+}
+
+#if canImport(AppKit)
+extension Ghostty.Input.GestureEvent.Phase {
+    /// Create a gesture Phase from an NSEvent.Phase. Returns nil for phases
+    /// that don't map to a discrete gesture phase we handle.
+    init?(_ phase: NSEvent.Phase) {
+        switch phase {
+        case .began: self = .began
+        case .changed: self = .changed
+        case .ended: self = .ended
+        case .cancelled: self = .cancelled
+        default: return nil
+        }
+    }
+}
+#endif
+
 // MARK: Ghostty.Input.Mods
 
 extension Ghostty.Input {

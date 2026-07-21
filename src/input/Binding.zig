@@ -1653,6 +1653,35 @@ pub const Action = union(enum) {
     const bindingSetEqual = equal;
 };
 
+/// A trackpad/touchpad gesture that can be bound to an action via the
+/// `gesture` config option. These are the discrete, directional triggers the
+/// core derives from continuous platform gesture events.
+///
+/// This is intentionally kept separate from `Trigger` (which is keyboard- and
+/// C-ABI-facing) so gestures don't leak into key sequences, tables, or menus.
+pub const Gesture = enum {
+    @"pinch-in",
+    @"pinch-out",
+    // Extensible later: @"swipe-left", @"swipe-right", @"rotate-cw", ...
+};
+
+/// The family of gesture as delivered by an apprt. The specific directional
+/// `Gesture` trigger (e.g. pinch-in vs pinch-out) is derived by the core from
+/// the sign of the reported amount. Values must stay in sync with
+/// `ghostty_input_gesture_e` in include/ghostty.h.
+pub const GestureKind = enum(c_int) {
+    pinch,
+};
+
+/// The phase of a continuous gesture. Values must stay in sync with
+/// `ghostty_input_gesture_phase_e` in include/ghostty.h.
+pub const GesturePhase = enum(c_int) {
+    began,
+    changed,
+    ended,
+    cancelled,
+};
+
 /// Trigger is the associated key state that can trigger an action.
 /// This is an extern struct because this is also used in the C API.
 ///

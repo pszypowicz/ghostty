@@ -123,6 +123,18 @@ pressed_key: ?input.KeyEvent = null,
 /// for handled bindings.
 last_binding_trigger: u64 = 0,
 
+/// Trackpad gesture state. Continuous gestures (e.g. pinch) are accumulated
+/// here and converted into discrete steps that map to configured gesture
+/// bindings. See `gestureCallback`.
+gesture: struct {
+    /// Accumulated pinch magnification since the last discrete step.
+    pinch_accumulator: f64 = 0,
+
+    /// Whether a `once`-flagged action has already fired during the current
+    /// pinch gesture. Reset when a new gesture begins.
+    pinch_once_fired: bool = false,
+} = .{},
+
 /// The terminal IO handler.
 io: termio.Termio,
 io_thread: termio.Thread,
@@ -293,6 +305,7 @@ const DerivedConfig = struct {
     /// For docs for these, see the associated config they are derived from.
     original_font_size: f32,
     keybind: configpkg.Keybinds,
+    gesture: configpkg.Gesturebinds,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -372,6 +385,7 @@ const DerivedConfig = struct {
         return .{
             .original_font_size = config.@"font-size",
             .keybind = try config.keybind.clone(alloc),
+            .gesture = try config.gesture.clone(alloc),
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3419,6 +3433,77 @@ const ScrollAmount = struct {
 /// "Natural scrolling" is a macOS term for inverting the scroll direction.
 /// This should be handled by the apprt implementation. At this layer,
 /// negative is always down, left.
+/// The amount of accumulated pinch magnification that corresponds to one
+/// discrete gesture step (e.g. one font size increment). macOS reports
+/// `NSEvent.magnification` deltas that sum to roughly the fractional size
+/// change, so ~0.1 is about one step per moderate pinch.
+const pinch_step: f64 = 0.1;
+
+/// Called for trackpad/touchpad gestures. Continuous gestures are accumulated
+/// into discrete steps here and dispatched to the configured `gesture`
+/// bindings, reusing the same action machinery as keybinds.
+pub fn gestureCallback(
+    self: *Surface,
+    kind: input.Binding.GestureKind,
+    amount: f64,
+    phase: input.Binding.GesturePhase,
+) !void {
+    // Crash metadata in case we crash in here
+    crash.sentry.thread_state = self.crashThreadState();
+    defer crash.sentry.thread_state = null;
+
+    // Always show the mouse again if it is hidden
+    if (self.mouse.hidden) self.showMouse();
+
+    switch (kind) {
+        .pinch => try self.pinchGesture(amount, phase),
+    }
+}
+
+fn pinchGesture(
+    self: *Surface,
+    amount: f64,
+    phase: input.Binding.GesturePhase,
+) !void {
+    switch (phase) {
+        .began => {
+            self.gesture.pinch_accumulator = 0;
+            self.gesture.pinch_once_fired = false;
+        },
+
+        .changed => {
+            self.gesture.pinch_accumulator += amount;
+            while (@abs(self.gesture.pinch_accumulator) >= pinch_step) {
+                // Consume one step, keeping the remainder so that a fast pinch
+                // triggers multiple steps in a single event.
+                const out = self.gesture.pinch_accumulator > 0;
+                if (out) {
+                    self.gesture.pinch_accumulator -= pinch_step;
+                } else {
+                    self.gesture.pinch_accumulator += pinch_step;
+                }
+
+                const g: input.Binding.Gesture =
+                    if (out) .@"pinch-out" else .@"pinch-in";
+                const value = self.config.gesture.get(g) orelse continue;
+
+                // A `once`-flagged action only fires a single time per gesture.
+                if (value.flags.once and self.gesture.pinch_once_fired) continue;
+                _ = self.performBindingAction(value.action) catch |err| {
+                    log.warn("error performing gesture action err={}", .{err});
+                    continue;
+                };
+                if (value.flags.once) self.gesture.pinch_once_fired = true;
+            }
+        },
+
+        .ended, .cancelled => {
+            self.gesture.pinch_accumulator = 0;
+            self.gesture.pinch_once_fired = false;
+        },
+    }
+}
+
 pub fn scrollCallback(
     self: *Surface,
     xoff: f64,
