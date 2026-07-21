@@ -3453,6 +3453,11 @@ pub fn gestureCallback(
 
     switch (kind) {
         .pinch => try self.pinchGesture(amount, phase),
+
+        // Discrete, one-shot gesture: fire the bound action once when the
+        // gesture completes.
+        .smart_magnify => if (phase == .ended)
+            self.performGestureBinding(.@"smart-magnify"),
     }
 }
 
@@ -3501,6 +3506,15 @@ fn pinchGesture(
             self.gesture.pinch_once_fired = false;
         },
     }
+}
+
+/// Perform the action bound to a discrete gesture, if any. Used by one-shot
+/// gestures that have no accumulator or direction (e.g. smart-magnify).
+fn performGestureBinding(self: *Surface, gesture: input.Binding.Gesture) void {
+    const value = self.config.gesture.get(gesture) orelse return;
+    _ = self.performBindingAction(value.action) catch |err| {
+        log.warn("error performing gesture action err={}", .{err});
+    };
 }
 
 pub fn scrollCallback(

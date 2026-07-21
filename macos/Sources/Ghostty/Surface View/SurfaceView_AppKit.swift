@@ -1064,6 +1064,16 @@ extension Ghostty {
                 phase: phase))
         }
 
+        override func smartMagnify(with event: NSEvent) {
+            guard let surfaceModel else { return }
+            // Two-finger double-tap is a discrete, one-shot gesture, so we
+            // report it as a single completed event.
+            surfaceModel.sendGesture(.init(
+                kind: .smartMagnify,
+                amount: 0,
+                phase: .ended))
+        }
+
         override func pressureChange(with event: NSEvent) {
             guard let surface = self.surface else { return }
 

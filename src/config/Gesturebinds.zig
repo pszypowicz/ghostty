@@ -267,3 +267,16 @@ test "formatEntry: empty renders empty field" {
     try g.formatEntry(formatterpkg.entryFormatter("gesture", &buf.writer));
     try testing.expectEqualStrings("gesture = \n", buf.written());
 }
+
+test "parseCLI: smart-magnify discrete gesture" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var g: Gesturebinds = .{};
+    try g.parseCLI(alloc, "smart-magnify=text:\\x02s");
+    const v = g.get(.@"smart-magnify").?;
+    try testing.expect(v.action == .text);
+    try testing.expectEqualStrings("\\x02s", v.action.text);
+}

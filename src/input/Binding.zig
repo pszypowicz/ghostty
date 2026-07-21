@@ -1662,6 +1662,9 @@ pub const Action = union(enum) {
 pub const Gesture = enum {
     @"pinch-in",
     @"pinch-out",
+    /// Two-finger double-tap (macOS "smart zoom"). A discrete, one-shot
+    /// gesture with no direction or magnitude.
+    @"smart-magnify",
     // Extensible later: @"swipe-left", @"swipe-right", @"rotate-cw", ...
 };
 
@@ -1671,6 +1674,7 @@ pub const Gesture = enum {
 /// `ghostty_input_gesture_e` in include/ghostty.h.
 pub const GestureKind = enum(c_int) {
     pinch,
+    smart_magnify,
 };
 
 /// The phase of a continuous gesture. Values must stay in sync with

@@ -549,10 +549,12 @@ extension Ghostty.Input {
         /// `ghostty_input_gesture_e` - The family of gesture.
         enum Kind {
             case pinch
+            case smartMagnify
 
             var cGesture: ghostty_input_gesture_e {
                 switch self {
                 case .pinch: GHOSTTY_GESTURE_PINCH
+                case .smartMagnify: GHOSTTY_GESTURE_SMART_MAGNIFY
                 }
             }
         }

@@ -1911,6 +1911,9 @@ keybind: Keybinds = .{},
 ///
 ///   * `pinch-in` - Trackpad pinch closed (zoom out).
 ///   * `pinch-out` - Trackpad pinch open (zoom in).
+///   * `smart-magnify` - Two-finger double-tap (macOS "smart zoom"). A discrete,
+///     one-shot gesture, so the `once:` prefix is unnecessary. Unbound by
+///     default.
 ///
 /// By default, pinch is bound to font size (`pinch-out` increases,
 /// `pinch-in` decreases), matching the conventional behavior of other

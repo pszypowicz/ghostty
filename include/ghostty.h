@@ -116,6 +116,7 @@ typedef enum {
 
 typedef enum {
   GHOSTTY_GESTURE_PINCH,
+  GHOSTTY_GESTURE_SMART_MAGNIFY,
 } ghostty_input_gesture_e;
 
 typedef enum {
