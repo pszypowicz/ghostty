@@ -216,43 +216,11 @@ extension Ghostty {
         /// Event monitor (see individual events for why)
         private var eventMonitor: Any?
 
-        /// Raw-trackpad gesture recognition. The recognizer owns the raw
-        /// NSTouch stream and produces pinch/swipe events; scroll events
-        /// remain the scroll transport and the core arbitrates between the
-        /// two copies of the same physical motion.
-        private let trackpadGesture = TrackpadGestureRecognizer()
-
-        /// Maps NSTouch identity objects to the small stable ids the
-        /// recognizer tracks fingers by.
-        private var trackpadTouchIds: [NSObject: Int] = [:]
-        private var trackpadNextTouchId: Int = 1
-
-        /// Drives the recognizer's clock while touches are down: stationary
-        /// fingers stop producing touch events, but the recognizer's settle
-        /// timer still has to fire.
-        private var trackpadTickTimer: Timer?
-
-        /// Modifier flags captured from the most recent touch event, so a
-        /// gesture that commits on a timer tick still reports the right mods.
-        private var trackpadTouchMods: NSEvent.ModifierFlags = []
-
-        /// The recognizer reports absolute pinch scale; the core accumulates
-        /// incremental deltas (magnify(with:) semantics). This tracks the
-        /// last reported scale to convert between the two.
+        /// The app-level TrackpadEventMonitor reports absolute pinch scale;
+        /// the core accumulates incremental deltas (magnify(with:)
+        /// semantics). This tracks the last reported scale to convert
+        /// between the two.
         private var trackpadPinchScale: Double = 1.0
-
-        /// Observes our window resigning key so an in-flight touch sequence
-        /// can be abandoned (see viewDidMoveToWindow).
-        private var trackpadResignKeyObserver: (any NSObjectProtocol)?
-
-        /// When a sequence is abandoned mid-flight (a fired gesture switched
-        /// tabs), the user's fingers are still physically down and their
-        /// continuing motion is re-delivered as fresh touches - to this
-        /// surface or the newly revealed one. Without suppression that
-        /// follow-through immediately commits a second gesture. This flag is
-        /// app-global because the continuation can land on any surface; it
-        /// clears when the fingers fully lift (or after a stale timeout).
-        private static var trackpadHandoff: (active: Bool, since: TimeInterval) = (false, 0)
 
         // We need to support being a first responder so that we can get input events
         override var acceptsFirstResponder: Bool { return true }
@@ -278,19 +246,13 @@ extension Ghostty {
             // can do SOMETHING.
             super.init(id: uuid, frame: NSRect(x: 0, y: 0, width: 800, height: 600))
 
-            // Opt into raw trackpad touches for gesture recognition. Resting
-            // touches (e.g. a thumb parked on the pad) stay filtered out by
-            // AppKit. Scroll and pressure events are unaffected.
+            // Opt into raw trackpad touches. Gestures are recognized by the
+            // app-level TrackpadEventMonitor, but AppKit only generates the
+            // touch-bearing gesture events it observes when a view under the
+            // pointer accepts indirect touches. Resting touches (e.g. a
+            // thumb parked on the pad) stay filtered out by AppKit.
             allowedTouchTypes = [.indirect]
             wantsRestingTouches = false
-            trackpadGesture.onGesture = { [weak self] event in
-                self?.handleTrackpadGesture(event)
-            }
-            if Self.trackpadDebug {
-                trackpadGesture.onStateChange = { [weak self] state in
-                    self?.trackpadTrace("state -> \(state.label)")
-                }
-            }
 
             // Our cache of screen data
             cachedScreenContents = .init(duration: .milliseconds(500)) { [weak self] in
@@ -440,12 +402,6 @@ extension Ghostty {
         }
 
         deinit {
-            // Stop driving the gesture recognizer's clock
-            trackpadTickTimer?.invalidate()
-            if let trackpadResignKeyObserver {
-                NotificationCenter.default.removeObserver(trackpadResignKeyObserver)
-            }
-
             // Remove all of our notificationcenter subscriptions
             let center = NotificationCenter.default
             center.removeObserver(self)
@@ -1140,137 +1096,10 @@ extension Ghostty {
             FileHandle.standardError.write(Data("trackpad[\(sid)]: \(message())\n".utf8))
         }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let observer = trackpadResignKeyObserver {
-                NotificationCenter.default.removeObserver(observer)
-                trackpadResignKeyObserver = nil
-            }
-            guard let window else { return }
-            // When our window stops being key - typically because a fired
-            // gesture just switched tabs - AppKit stops delivering the rest
-            // of the in-flight touch sequence, and the recognizer would wait
-            // forever for ended events that never come, eating every later
-            // gesture on this surface. Abandon the sequence immediately.
-            trackpadResignKeyObserver = NotificationCenter.default.addObserver(
-                forName: NSWindow.didResignKeyNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
-                self?.abandonTrackpadSequence()
-            }
-        }
-
-        private func abandonTrackpadSequence() {
-            guard trackpadGesture.state != .idle else { return }
-            trackpadTrace("reset: window resigned key mid-sequence")
-            trackpadGesture.reset()
-            trackpadTouchIds.removeAll()
-            syncTrackpadTickTimer()
-            Self.trackpadHandoff = (true, ProcessInfo.processInfo.systemUptime)
-        }
-
-        override func touchesBegan(with event: NSEvent) { ingestTouches(event, "B") }
-        override func touchesMoved(with event: NSEvent) { ingestTouches(event, "M") }
-        override func touchesEnded(with event: NSEvent) { ingestTouches(event, "E") }
-        override func touchesCancelled(with event: NSEvent) { ingestTouches(event, "C") }
-
-        private func ingestTouches(_ event: NSEvent, _ callback: String) {
-            let touches = event.touches(matching: .any, in: self)
-            if Self.trackpadDebug {
-                var phases: [String] = []
-                for touch in touches {
-                    phases.append(Self.touchPhase(touch.phase).rawValue)
-                }
-                trackpadTrace("\(callback) touches=[\(phases.joined(separator: ","))]")
-            }
-            guard !touches.isEmpty else { return }
-
-            // Swallow the follow-through of an abandoned sequence. Lift
-            // frames are unreliable evidence here - the delivery cut that
-            // abandoned the sequence can truncate or drop them, and a
-            // partial lift seen by one surface says nothing about fingers
-            // still streaming to another - so suppression ends only on
-            // unambiguous proof of a new landing: a frame in which every
-            // touch is freshly began. The guard window filters the one
-            // ambiguous case - a re-delivered follow-through can arrive as
-            // all-began too, but it does so nearly instantly, while a human
-            // lift-and-reswipe cannot.
-            if Self.trackpadHandoff.active {
-                let elapsed = event.timestamp - Self.trackpadHandoff.since
-                let allBegan = touches.allSatisfy { touch in
-                    Self.touchPhase(touch.phase) == .began
-                }
-                if elapsed > 2.0 || (allBegan && elapsed > 0.15) {
-                    Self.trackpadHandoff.active = false
-                } else {
-                    trackpadTrace("\(callback) suppressed (sequence handoff)")
-                    return
-                }
-            }
-            trackpadTouchMods = event.modifierFlags
-            var deviceSize = CGSize(width: 1, height: 1)
-            var samples: [TouchSample] = []
-            for touch in touches {
-                deviceSize = touch.deviceSize
-                // identity is stable across the touch's lifetime and adopts
-                // NSCopying; a copy is the sanctioned dictionary key.
-                guard let key = touch.identity.copy(with: nil) as? NSObject else { continue }
-                let id: Int
-                if let known = trackpadTouchIds[key] {
-                    id = known
-                } else {
-                    id = trackpadNextTouchId
-                    trackpadNextTouchId += 1
-                    trackpadTouchIds[key] = id
-                }
-                let phase = Self.touchPhase(touch.phase)
-                if phase == .ended || phase == .cancelled {
-                    trackpadTouchIds.removeValue(forKey: key)
-                }
-                let p = touch.normalizedPosition
-                samples.append(TouchSample(id: id, x: p.x, y: p.y, phase: phase))
-            }
-            trackpadGesture.process(TouchFrame(
-                t: event.timestamp,
-                w: deviceSize.width,
-                h: deviceSize.height,
-                touches: samples))
-            syncTrackpadTickTimer()
-        }
-
-        private static func touchPhase(_ phase: NSTouch.Phase) -> TouchPhase {
-            if phase.contains(.began) { return .began }
-            if phase.contains(.moved) { return .moved }
-            if phase.contains(.ended) { return .ended }
-            if phase.contains(.cancelled) { return .cancelled }
-            return .stationary
-        }
-
-        /// NSEvent.timestamp and systemUptime share a clock, so the timer
-        /// can drive the recognizer between touch events.
-        private func syncTrackpadTickTimer() {
-            let active = trackpadGesture.state != .idle
-            if active && trackpadTickTimer == nil {
-                trackpadTickTimer = Timer.scheduledTimer(
-                    withTimeInterval: 1.0 / 120.0,
-                    repeats: true
-                ) { [weak self] timer in
-                    guard let self else {
-                        timer.invalidate()
-                        return
-                    }
-                    self.trackpadGesture.tick(now: ProcessInfo.processInfo.systemUptime)
-                    self.syncTrackpadTickTimer()
-                }
-            } else if !active, let timer = trackpadTickTimer {
-                timer.invalidate()
-                trackpadTickTimer = nil
-                trackpadTouchIds.removeAll()
-            }
-        }
-
-        private func handleTrackpadGesture(_ event: GestureEvent) {
+        /// Called by the app-level TrackpadEventMonitor, which owns touch
+        /// acquisition and recognition and routes each gesture to its
+        /// sticky target surface.
+        func handleTrackpadGesture(_ event: GestureEvent, mods flags: NSEvent.ModifierFlags) {
             guard let surfaceModel else { return }
             let phase: Ghostty.Input.GestureEvent.Phase
             switch event.phase {
@@ -1279,7 +1108,7 @@ extension Ghostty {
             case .ended: phase = .ended
             case .cancelled: phase = .cancelled
             }
-            let mods = Ghostty.ghosttyMods(trackpadTouchMods)
+            let mods = Ghostty.ghosttyMods(flags)
 
             switch event.kind {
             case .pinch:

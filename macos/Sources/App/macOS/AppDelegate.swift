@@ -141,6 +141,9 @@ class AppDelegate: NSObject,
 
     /// Manages updates
     let updateController = UpdateController()
+
+    /// App-level trackpad gesture acquisition and routing.
+    private let trackpadEventMonitor = TrackpadEventMonitor()
     var updateViewModel: UpdateViewModel {
         updateController.viewModel
     }
@@ -208,6 +211,11 @@ class AppDelegate: NSObject,
             // Disable this so that repeated key events make it through to our terminal views.
             "ApplePressAndHoldEnabled": false,
         ])
+
+        // Trackpad gestures are acquired and recognized at the app level
+        // (see TrackpadEventMonitor) so one physical touch sequence maps to
+        // one gesture regardless of what its action does to window topology.
+        trackpadEventMonitor.start()
 
         // Store our start time
         applicationLaunchTime = ProcessInfo.processInfo.systemUptime
