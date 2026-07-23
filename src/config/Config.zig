@@ -1903,9 +1903,9 @@ keybind: Keybinds = .{},
 
 /// Bind a trackpad gesture to a keybind action.
 ///
-/// The syntax is `gesture = <gesture> = <action>`, where `<gesture>` is one of
-/// the recognized gestures below and `<action>` is any keybind action (the
-/// same actions available to `keybind`).
+/// The syntax is `gesture = [mods+]<gesture>[:<fingers>] = [flags:]<action>`,
+/// where `<gesture>` is one of the recognized gestures below and `<action>`
+/// is any keybind action (the same actions available to `keybind`).
 ///
 /// Recognized gestures:
 ///
@@ -1914,10 +1914,21 @@ keybind: Keybinds = .{},
 ///   * `smart-magnify` - Two-finger double-tap (macOS "smart zoom"). A discrete,
 ///     one-shot gesture, so the `once:` prefix is unnecessary. Unbound by
 ///     default.
+///   * `swipe-left`, `swipe-right`, `swipe-up`, `swipe-down` - Directional
+///     multi-finger swipes. The optional `:<fingers>` suffix selects the
+///     finger count (2, 3, or 4) and defaults to 3, e.g. `swipe-left:4`.
 ///
-/// By default, pinch is bound to font size (`pinch-out` increases,
-/// `pinch-in` decreases), matching the conventional behavior of other
-/// terminals.
+/// Triggers may require modifier keys using the same names and aliases as
+/// `keybind` (e.g. `cmd+swipe-left:2`); the binding then only fires while
+/// those modifiers are held.
+///
+/// Default bindings: pinch is bound to font size (`pinch-out` increases,
+/// `pinch-in` decreases) and three-finger horizontal swipes switch tabs
+/// (`swipe-left:3` is next tab, `swipe-right:3` is previous tab), following
+/// the content metaphor used by Terminal.app. Note that macOS system
+/// gestures (Mission Control, Spaces) take precedence over gestures with
+/// the same finger count; free them in System Settings if a three- or
+/// four-finger binding doesn't fire.
 ///
 /// Because a pinch is a continuous gesture, its action is triggered once per
 /// discrete step as you pinch. For a discrete action (e.g. one that opens a
@@ -1926,6 +1937,20 @@ keybind: Keybinds = .{},
 /// session list with a pinch:
 ///
 ///     gesture = pinch-in = once:text:\x02s
+///
+/// Swipes are discrete: the action fires once when the swipe direction is
+/// recognized, so `once:` is unnecessary.
+///
+/// Two-finger swipes share their physical motion with scrolling, so they are
+/// arbitrated in favor of the running program: a two-finger swipe binding
+/// does not fire while the program has enabled mouse reporting (e.g. tmux
+/// with `mouse on`), and vertical two-finger swipes do not fire at all since
+/// vertical scroll always has a consumer. Prefix the action with `force:` to
+/// skip this arbitration and always fire, at the cost of taking that motion
+/// away from the program. Requiring a modifier (e.g. `cmd+swipe-left:2`) is
+/// a conflict-free alternative. When a two-finger swipe binding fires, the
+/// scroll produced by the same motion (including its inertial momentum tail)
+/// is suppressed.
 ///
 /// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
 /// `gesture =` alone resets all gesture bindings to the defaults, and

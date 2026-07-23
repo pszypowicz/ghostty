@@ -133,6 +133,14 @@ gesture: struct {
     /// Whether a `once`-flagged action has already fired during the current
     /// pinch gesture. Reset when a new gesture begins.
     pinch_once_fired: bool = false,
+
+    /// Scroll-claim state. A trackpad produces the same physical two-finger
+    /// motion as both scroll events and raw touch gestures. When a gesture
+    /// binding consumes a touch sequence, the sequence is "claimed": live
+    /// scroll events from the same motion are dropped, and after the fingers
+    /// lift the claim drains through the inertial momentum tail so leftover
+    /// inertia doesn't scroll whatever the gesture revealed.
+    scroll_claim: enum { none, active, momentum } = .none,
 } = .{},
 
 /// The terminal IO handler.
@@ -3441,6 +3449,9 @@ const ScrollAmount = struct {
 pub fn gestureCallback(
     self: *Surface,
     kind: input.Binding.GestureKind,
+    direction: input.Binding.GestureDirection,
+    fingers: u8,
+    mods: input.Mods,
     amount: f64,
     phase: input.Binding.GesturePhase,
 ) !void {
@@ -3451,18 +3462,45 @@ pub fn gestureCallback(
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
 
+    // The changed stream is high-frequency; everything else is a decision
+    // point worth tracing when diagnosing gesture feel.
+    if (phase != .changed) log.info(
+        "gesture event kind={} direction={} fingers={} phase={}",
+        .{ kind, direction, fingers, phase },
+    );
+
+    // A new gesture beginning means any prior sequence is over. An active
+    // claim at this point is stale (its release event was lost), so clear it
+    // rather than letting it eat scroll forever.
+    if (phase == .began and self.gesture.scroll_claim == .active) {
+        self.gesture.scroll_claim = .none;
+    }
+
     switch (kind) {
-        .pinch => try self.pinchGesture(amount, phase),
+        .pinch => try self.pinchGesture(mods, amount, phase),
 
         // Discrete, one-shot gesture: fire the bound action once when the
-        // gesture completes.
-        .smart_magnify => if (phase == .ended)
-            self.performGestureBinding(.@"smart-magnify"),
+        // gesture completes. A tap produces no scroll, so it never claims.
+        .smart_magnify => if (phase == .ended) self.performGestureBinding(.{
+            .gesture = .@"smart-magnify",
+            .mods = mods.binding(),
+        }),
+
+        .swipe => self.swipeGesture(direction, fingers, mods, phase),
+    }
+
+    // The touch sequence ended; a claimed sequence drains through its
+    // momentum tail before scroll resumes.
+    if (phase == .ended or phase == .cancelled) {
+        if (self.gesture.scroll_claim == .active) {
+            self.gesture.scroll_claim = .momentum;
+        }
     }
 }
 
 fn pinchGesture(
     self: *Surface,
+    mods: input.Mods,
     amount: f64,
     phase: input.Binding.GesturePhase,
 ) !void {
@@ -3470,6 +3508,16 @@ fn pinchGesture(
         .began => {
             self.gesture.pinch_accumulator = 0;
             self.gesture.pinch_once_fired = false;
+
+            // Commit-and-lock: a recognized pinch owns its touch sequence,
+            // so any scroll events the OS derives from the same fingers are
+            // dropped while the pinch is bound to an action.
+            const bmods = mods.binding();
+            if (self.config.gesture.get(.{ .gesture = .@"pinch-in", .mods = bmods }) != null or
+                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null)
+            {
+                self.gesture.scroll_claim = .active;
+            }
         },
 
         .changed => {
@@ -3489,7 +3537,10 @@ fn pinchGesture(
 
                 const g: input.Binding.Gesture =
                     if (out) .@"pinch-out" else .@"pinch-in";
-                const value = self.config.gesture.get(g) orelse continue;
+                const value = self.config.gesture.get(.{
+                    .gesture = g,
+                    .mods = mods.binding(),
+                }) orelse continue;
 
                 // A `once`-flagged action only fires a single time per gesture.
                 if (value.flags.once and self.gesture.pinch_once_fired) continue;
@@ -3509,9 +3560,73 @@ fn pinchGesture(
 }
 
 /// Perform the action bound to a discrete gesture, if any. Used by one-shot
-/// gestures that have no accumulator or direction (e.g. smart-magnify).
-fn performGestureBinding(self: *Surface, gesture: input.Binding.Gesture) void {
-    const value = self.config.gesture.get(gesture) orelse return;
+/// gestures that have no accumulator (e.g. smart-magnify).
+fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger) void {
+    const value = self.config.gesture.get(trigger) orelse return;
+    _ = self.performBindingAction(value.action) catch |err| {
+        log.warn("error performing gesture action err={}", .{err});
+    };
+}
+
+fn swipeGesture(
+    self: *Surface,
+    direction: input.Binding.GestureDirection,
+    fingers: u8,
+    mods: input.Mods,
+    phase: input.Binding.GesturePhase,
+) void {
+    // Swipes are discrete: the bound action fires once, at the moment the
+    // recognizer commits the direction (the began phase). Later phases only
+    // matter for claim lifetime, which gestureCallback handles.
+    if (phase != .began) return;
+
+    const gesture: input.Binding.Gesture = switch (direction) {
+        .left => .@"swipe-left",
+        .right => .@"swipe-right",
+        .up => .@"swipe-up",
+        .down => .@"swipe-down",
+        .none => return,
+    };
+
+    const value = self.config.gesture.get(.{
+        .gesture = gesture,
+        .fingers = fingers,
+        .mods = mods.binding(),
+    }) orelse {
+        log.info("swipe unbound gesture={} fingers={}", .{ gesture, fingers });
+        return;
+    };
+
+    // Arbitration for two-finger swipes, which share their physical motion
+    // with scrolling. The running program outranks the gesture by default:
+    // if it enabled mouse reporting it receives wheel events on both axes,
+    // and the vertical axis always has a consumer (scrollback or alternate
+    // scroll arrows) even when it didn't. Only a horizontal two-finger swipe
+    // in a surface without mouse reporting is unowned motion. The `force:`
+    // flag skips all of this. Three or more fingers never produce scroll
+    // events, so there is nothing to arbitrate.
+    if (fingers == 2 and !value.flags.force) {
+        if (direction == .up or direction == .down) {
+            log.info("swipe skipped: vertical two-finger motion is scroll", .{});
+            return;
+        }
+
+        const mouse_reporting = reporting: {
+            self.renderer_state.mutex.lock();
+            defer self.renderer_state.mutex.unlock();
+            break :reporting self.isMouseReporting();
+        };
+        if (mouse_reporting) {
+            log.info("swipe skipped: mouse reporting active", .{});
+            return;
+        }
+    }
+
+    // The binding consumes the touch sequence: claim it so the scroll copy
+    // of the same motion (and its momentum tail) is dropped.
+    self.gesture.scroll_claim = .active;
+
+    log.info("swipe fired gesture={} fingers={}", .{ gesture, fingers });
     _ = self.performBindingAction(value.action) catch |err| {
         log.warn("error performing gesture action err={}", .{err});
     };
@@ -3528,6 +3643,22 @@ pub fn scrollCallback(
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
+
+    // Trackpad gesture arbitration: a two-finger motion arrives both as raw
+    // touches and as scroll events. If a gesture binding claimed the touch
+    // sequence, this event is the scroll copy of that same motion (a
+    // trackpad is one device; nothing else can scroll while the claimed
+    // fingers are down) and must be dropped. After the fingers lift, the
+    // claim keeps swallowing the sequence's inertial momentum tail; the
+    // first non-momentum event is a fresh motion and releases the claim.
+    switch (self.gesture.scroll_claim) {
+        .none => {},
+        .active => return,
+        .momentum => {
+            if (scroll_mods.momentum != .none) return;
+            self.gesture.scroll_claim = .none;
+        },
+    }
 
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();

@@ -857,10 +857,20 @@ pub const Surface = struct {
     pub fn gestureCallback(
         self: *Surface,
         kind: input.Binding.GestureKind,
+        direction: input.Binding.GestureDirection,
+        fingers: u8,
+        mods: input.Mods,
         amount: f64,
         phase: input.Binding.GesturePhase,
     ) void {
-        self.core_surface.gestureCallback(kind, amount, phase) catch |err| {
+        self.core_surface.gestureCallback(
+            kind,
+            direction,
+            fingers,
+            mods,
+            amount,
+            phase,
+        ) catch |err| {
             log.err("error in gesture callback err={}", .{err});
             return;
         };
@@ -1920,6 +1930,9 @@ pub const CAPI = struct {
     export fn ghostty_surface_gesture(
         surface: *Surface,
         kind_raw: c_int,
+        direction_raw: c_int,
+        fingers: u8,
+        mods_raw: c_int,
         amount: f64,
         phase_raw: c_int,
     ) void {
@@ -1930,6 +1943,13 @@ pub const CAPI = struct {
             log.warn("invalid gesture kind value={}", .{kind_raw});
             return;
         };
+        const direction = std.meta.intToEnum(
+            input.Binding.GestureDirection,
+            direction_raw,
+        ) catch {
+            log.warn("invalid gesture direction value={}", .{direction_raw});
+            return;
+        };
         const phase = std.meta.intToEnum(
             input.Binding.GesturePhase,
             phase_raw,
@@ -1937,8 +1957,12 @@ pub const CAPI = struct {
             log.warn("invalid gesture phase value={}", .{phase_raw});
             return;
         };
+        const mods: input.Mods = @bitCast(@as(
+            input.Mods.Backing,
+            @truncate(@as(c_uint, @bitCast(mods_raw))),
+        ));
 
-        surface.gestureCallback(kind, amount, phase);
+        surface.gestureCallback(kind, direction, fingers, mods, amount, phase);
     }
 
     export fn ghostty_surface_ime_point(
