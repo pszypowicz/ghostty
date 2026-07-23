@@ -1974,6 +1974,19 @@ gesture: Gesturebinds = .{},
 /// (currently macOS).
 @"gesture-pinch-step": f64 = 0.1,
 
+/// Show brief feedback when a configured trackpad gesture binding is
+/// deferred to the running program instead of firing. This happens when a
+/// two-finger swipe binding is arbitrated in favor of a program that
+/// enabled mouse reporting (e.g. tmux with `mouse on`); without feedback,
+/// a deferred gesture is indistinguishable from a broken one. The feedback
+/// only ever appears at that exact moment, so it stays invisible in normal
+/// use. Ambient state is already signaled by the pointer shape: an arrow
+/// instead of an I-beam means the program owns the mouse.
+///
+/// This only has an effect on platforms that support trackpad gestures
+/// (currently macOS).
+@"gesture-deferred-indicator": bool = true,
+
 /// Remap modifier keys within Ghostty. This allows you to swap or reassign
 /// modifier keys at the application level without affecting system-wide
 /// settings.

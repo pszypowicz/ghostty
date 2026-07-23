@@ -360,6 +360,10 @@ extension Notification.Name {
     /// Ring the bell
     static let ghosttyBellDidRing = Notification.Name("com.mitchellh.ghostty.ghosttyBellDidRing")
 
+    /// A configured trackpad gesture was deferred to the running program
+    /// (mouse reporting owns the motion). Object is the surface view.
+    static let ghosttyGestureDidDefer = Notification.Name("com.mitchellh.ghostty.gestureDidDefer")
+
     /// The active selection changed
     static let ghosttySelectionDidChange = Notification.Name("com.mitchellh.ghostty.ghosttySelectionDidChange")
 

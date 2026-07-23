@@ -347,6 +347,13 @@ pub const Action = union(Key) {
     /// otherwise the terminal-set title.
     copy_title_to_clipboard,
 
+    /// A configured trackpad gesture binding was deliberately not fired
+    /// because the running program owns the motion (e.g. a two-finger swipe
+    /// binding while the program has mouse reporting enabled). The apprt
+    /// should show brief, unobtrusive feedback so the user can tell a
+    /// deferred gesture apart from a broken one.
+    gesture_deferred,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -415,6 +422,7 @@ pub const Action = union(Key) {
         search_selected,
         readonly,
         copy_title_to_clipboard,
+        gesture_deferred,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");

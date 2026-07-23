@@ -315,6 +315,7 @@ const DerivedConfig = struct {
     keybind: configpkg.Keybinds,
     gesture: configpkg.Gesturebinds,
     gesture_pinch_step: f64,
+    gesture_deferred_indicator: bool,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -396,6 +397,7 @@ const DerivedConfig = struct {
             .keybind = try config.keybind.clone(alloc),
             .gesture = try config.gesture.clone(alloc),
             .gesture_pinch_step = config.@"gesture-pinch-step",
+            .gesture_deferred_indicator = config.@"gesture-deferred-indicator",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3618,6 +3620,17 @@ fn swipeGesture(
         };
         if (mouse_reporting) {
             log.info("swipe skipped: mouse reporting active", .{});
+            // A deferred gesture is indistinguishable from a broken one
+            // without feedback at exactly this moment.
+            if (self.config.gesture_deferred_indicator) {
+                _ = self.rt_app.performAction(
+                    .{ .surface = self },
+                    .gesture_deferred,
+                    {},
+                ) catch |err| {
+                    log.warn("apprt failed to report deferred gesture err={}", .{err});
+                };
+            }
             return;
         }
     }
