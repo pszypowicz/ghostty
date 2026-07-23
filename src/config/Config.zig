@@ -1916,19 +1916,21 @@ keybind: Keybinds = .{},
 ///     default.
 ///   * `swipe-left`, `swipe-right`, `swipe-up`, `swipe-down` - Directional
 ///     multi-finger swipes. The optional `:<fingers>` suffix selects the
-///     finger count (2, 3, or 4) and defaults to 3, e.g. `swipe-left:4`.
+///     finger count (2, 3, or 4) and defaults to 2, e.g. `swipe-left:4`.
 ///
 /// Triggers may require modifier keys using the same names and aliases as
 /// `keybind` (e.g. `cmd+swipe-left:2`); the binding then only fires while
 /// those modifiers are held.
 ///
 /// Default bindings: pinch is bound to font size (`pinch-out` increases,
-/// `pinch-in` decreases) and three-finger horizontal swipes switch tabs
-/// (`swipe-left:3` is next tab, `swipe-right:3` is previous tab), following
-/// the content metaphor used by Terminal.app. Note that macOS system
-/// gestures (Mission Control, Spaces) take precedence over gestures with
-/// the same finger count; free them in System Settings if a three- or
-/// four-finger binding doesn't fire.
+/// `pinch-in` decreases) and two-finger horizontal swipes switch tabs
+/// (`swipe-left:2` is next tab, `swipe-right:2` is previous tab), following
+/// the content metaphor used by Safari. The defaults are safe alongside
+/// scrolling: they defer to programs that enabled mouse reporting (see the
+/// arbitration below), and horizontal two-finger motion has no consumer
+/// anywhere else. Note that macOS system gestures (Mission Control, Spaces)
+/// take precedence over gestures with the same finger count; free them in
+/// System Settings if a three- or four-finger binding doesn't fire.
 ///
 /// Because a pinch is a continuous gesture, its action is triggered once per
 /// discrete step as you pinch. For a discrete action (e.g. one that opens a

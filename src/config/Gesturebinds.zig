@@ -4,7 +4,7 @@
 //!     gesture = [mods+]<gesture>[:<fingers>] = [flags:]<action>
 //!
 //! where <gesture> is a `Binding.Gesture` (e.g. `pinch-in`, `swipe-left`),
-//! <fingers> is the finger count for swipe gestures (2-4, default 3), mods
+//! <fingers> is the finger count for swipe gestures (2-4, default 2), mods
 //! use the same names and aliases as `keybind` triggers, and <action> is any
 //! `Binding.Action`.
 //!
@@ -94,18 +94,19 @@ pub fn init(self: *Gesturebinds, alloc: Allocator) !void {
         .{ .action = .{ .decrease_font_size = 1 } },
     );
 
-    // Three-finger horizontal swipes switch tabs by default, following the
-    // content metaphor used by Terminal.app and Safari: fingers moving left
-    // reveal the tab to the right. Three fingers never conflict with
-    // two-finger scrolling, so this is safe out of the box.
+    // Two-finger horizontal swipes switch tabs by default, following the
+    // content metaphor used by Safari: fingers moving left reveal the tab to
+    // the right. This is safe out of the box because arbitration defers to
+    // programs that enabled mouse reporting, and horizontal two-finger
+    // motion has no consumer anywhere else.
     try self.map.put(
         alloc,
-        .{ .gesture = .@"swipe-left", .fingers = 3 },
+        .{ .gesture = .@"swipe-left", .fingers = 2 },
         .{ .action = .next_tab },
     );
     try self.map.put(
         alloc,
-        .{ .gesture = .@"swipe-right", .fingers = 3 },
+        .{ .gesture = .@"swipe-right", .fingers = 2 },
         .{ .action = .previous_tab },
     );
 }
@@ -166,7 +167,7 @@ pub fn parseCLI(self: *Gesturebinds, alloc: Allocator, input_: ?[]const u8) !voi
 
 /// Parse the trigger side: `[mods+]<gesture>[:<fingers>]`. Mods use the same
 /// names and aliases as keybind triggers. The finger-count suffix is only
-/// valid on swipe gestures and defaults to 3 when omitted.
+/// valid on swipe gestures and defaults to 2 when omitted.
 fn parseTrigger(name: []const u8) !Trigger {
     var mods: Mods = .{};
     var rem = name;
@@ -196,7 +197,7 @@ fn parseTrigger(name: []const u8) !Trigger {
 
     var trigger: Trigger = .{ .gesture = gesture, .fingers = fingers, .mods = mods };
     if (trigger.isSwipe()) {
-        if (fingers == 0) trigger.fingers = 3;
+        if (fingers == 0) trigger.fingers = 2;
         if (trigger.fingers < 2 or trigger.fingers > 4) return error.InvalidFormat;
     } else {
         // A finger count is only meaningful on swipes.
@@ -358,10 +359,10 @@ test "init: defaults present" {
     try testing.expect(g.get(.{ .gesture = .@"pinch-in" }).?.action == .decrease_font_size);
     try testing.expect(g.get(.{ .gesture = .@"pinch-out" }).?.action == .increase_font_size);
     try testing.expect(g.get(
-        .{ .gesture = .@"swipe-left", .fingers = 3 },
+        .{ .gesture = .@"swipe-left", .fingers = 2 },
     ).?.action == .next_tab);
     try testing.expect(g.get(
-        .{ .gesture = .@"swipe-right", .fingers = 3 },
+        .{ .gesture = .@"swipe-right", .fingers = 2 },
     ).?.action == .previous_tab);
 }
 
@@ -377,7 +378,7 @@ test "parseCLI: swipe with explicit finger count" {
     try testing.expect(v.action == .goto_split);
 }
 
-test "parseCLI: swipe finger count defaults to 3" {
+test "parseCLI: swipe finger count defaults to 2" {
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -385,7 +386,7 @@ test "parseCLI: swipe finger count defaults to 3" {
 
     var g: Gesturebinds = .{};
     try g.parseCLI(alloc, "swipe-left=next_tab");
-    try testing.expect(g.get(.{ .gesture = .@"swipe-left", .fingers = 3 }) != null);
+    try testing.expect(g.get(.{ .gesture = .@"swipe-left", .fingers = 2 }) != null);
 }
 
 test "parseCLI: swipe finger count out of range" {
