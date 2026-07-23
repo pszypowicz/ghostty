@@ -3460,6 +3460,13 @@ pub fn gestureCallback(
         .{ kind, direction, fingers, phase },
     );
 
+    // The passthrough modifier addresses the terminal itself: the gesture
+    // engine stands down so the motion flows as plain scrolling. Ended and
+    // cancelled still pass so a committed gesture's claim can release.
+    if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, mods.binding())) {
+        if (phase == .began or phase == .changed) return;
+    }
+
     // A new gesture beginning means any prior sequence is over. An active
     // claim at this point is stale (its release event was lost), so clear it
     // rather than letting it eat scroll forever.
@@ -3609,12 +3616,7 @@ fn swipeGesture(
     };
 
     const bmods = mods.binding();
-
-    // The passthrough modifier addresses the terminal itself: skip the
-    // gesture engine so the motion flows as plain scroll.
-    if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, bmods)) return;
-
-    const modified = @as(input.Mods.Backing, @bitCast(bmods)) != 0;
+    const modified = !bmods.empty();
 
     const value = self.config.gesture.get(.{
         .gesture = gesture,
@@ -3634,10 +3636,8 @@ fn swipeGesture(
     // fingers never produce scroll events, so there is nothing to arbitrate.
     //
     // Two escapes skip arbitration entirely: the `force:` flag, and a
-    // physically modified gesture (whether it matched an explicit modified
-    // binding or fell back to the unmodified one). Modified motion cannot
-    // collide with anyone's scrolling, since plain scrolling never involves
-    // held modifiers.
+    // modified trigger. Modified motion cannot collide with anyone's
+    // scrolling, since plain scrolling never involves held modifiers.
     if (fingers == 2 and !value.flags.force and !modified) {
         if (direction == .up or direction == .down) {
             log.debug("swipe skipped: vertical two-finger motion is scroll", .{});
@@ -3712,14 +3712,14 @@ pub fn scrollCallback(
         },
     }
 
-    // Precise motion held with a punch-through modifier belongs to the
-    // gesture layer from its very first frame: the modifier declared the
-    // motion is aimed at the terminal before it moved, so its horizontal
-    // scroll copy is never forwarded. This closes the recognizer's commit
-    // deadzone, during which no claim exists yet and the opening of a
-    // modified swipe would otherwise leak to the program as wheel events.
-    // Shift keeps its established scroll meaning, and the vertical axis
-    // still scrolls so modified vertical motion isn't dead input.
+    // Precise motion held with a gesture modifier belongs to the gesture
+    // layer from its very first frame: the modifier declared the motion is
+    // aimed at the terminal before it moved, so its horizontal scroll copy
+    // is never forwarded. This closes the recognizer's commit deadzone,
+    // during which no claim exists yet and the opening of a modified swipe
+    // would otherwise leak to the program as wheel events. The configured
+    // passthrough modifier is exempt, and the vertical axis still scrolls
+    // so modified vertical motion isn't dead input.
     const xoff: f64 = xoff: {
         if (!scroll_mods.precision) break :xoff xoff_raw;
         if (scroll_mods.momentum != .none) break :xoff xoff_raw;
@@ -3730,7 +3730,7 @@ pub fn scrollCallback(
             .alt = keys.alt,
             .super = keys.super,
         };
-        if (@as(input.Mods.Backing, @bitCast(held)) == 0) break :xoff xoff_raw;
+        if (held.empty()) break :xoff xoff_raw;
         if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, held)) break :xoff xoff_raw;
         for ([_]input.Binding.Gesture{ .@"swipe-left", .@"swipe-right" }) |g| {
             if (self.config.gesture.get(.{
