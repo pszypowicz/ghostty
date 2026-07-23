@@ -55,14 +55,6 @@ focused_surface: ?*Surface = null,
 /// claim must follow the physical sequence, not the surface.
 gesture_scroll_claim: enum { none, active, momentum } = .none,
 
-/// Whether the current scroll sequence bypasses mouse reporting because the
-/// configured bypass modifier was held (see mouse-scroll-bypass-mod). App
-/// state for the same reason as the gesture claim: live events follow the
-/// modifier per event, but the sequence's inertial momentum tail arrives
-/// after the modifier is typically released (and possibly at a different
-/// surface), and must stay with the consumer the sequence started with.
-scroll_bypass_latch: bool = false,
-
 /// The mailbox that can be used to send this thread messages. Note
 /// this is a blocking queue so if it is full you will get errors (or block).
 mailbox: Mailbox.Queue,

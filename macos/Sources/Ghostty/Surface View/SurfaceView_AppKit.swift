@@ -1048,9 +1048,10 @@ extension Ghostty {
 
         override func scrollWheel(with event: NSEvent) {
             trackpadTrace(String(
-                format: "scroll dx=%+.1f dy=%+.1f phase=%d momentum=%d",
+                format: "scroll dx=%+.1f dy=%+.1f phase=%d momentum=%d keys=%d",
                 event.scrollingDeltaX, event.scrollingDeltaY,
-                event.phase.rawValue, event.momentumPhase.rawValue))
+                event.phase.rawValue, event.momentumPhase.rawValue,
+                Ghostty.ghosttyMods(event.modifierFlags).rawValue & 0xF))
 
             guard let surfaceModel else { return }
 

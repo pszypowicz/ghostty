@@ -964,25 +964,6 @@ palette: Palette = .{},
 ///   * `never`
 @"mouse-shift-capture": MouseShiftCapture = .false,
 
-/// The modifier key that bypasses mouse reporting for scrolling.
-///
-/// While the running program has mouse reporting enabled (e.g. tmux with
-/// `mouse on`), scroll events are delivered to the program as wheel
-/// reports. Holding this modifier while scrolling delivers plain scrolling
-/// instead, exactly as if the program had not captured the mouse: viewport
-/// scrollback in the primary screen, or arrow keys in an alternate screen
-/// with alternate scroll enabled. This mirrors the established shift+click
-/// convention for selection.
-///
-/// The bypass is latched per scroll sequence, so the inertial momentum
-/// tail of a bypassed scroll stays bypassed even when the modifier is
-/// released after the fingers lift.
-///
-/// Valid values are `none`, `shift`, `ctrl`, `alt`, and `super` (the cmd
-/// key on macOS). This should differ from any modifier used with `gesture`
-/// bindings, since those claim modified motion for the terminal.
-@"mouse-scroll-bypass-mod": ScrollBypassMod = .shift,
-
 /// Enable or disable mouse reporting. When set to `false`, mouse events will
 /// not be reported to terminal applications even if they request it. This
 /// allows you to always use the mouse for selection and other terminal UI
@@ -1968,19 +1949,20 @@ keybind: Keybinds = .{},
 /// with `mouse on`), and vertical two-finger swipes do not fire at all since
 /// vertical scroll always has a consumer. Two kinds of binding skip this
 /// arbitration and always fire: triggers that require modifiers other than
-/// shift (e.g. `cmd+swipe-left:2` - shift keeps its established scroll
-/// meaning), since a modified motion cannot collide with anyone's scrolling
-/// and is unambiguous intent aimed at the terminal, and actions prefixed
-/// with `force:`, which take the motion away from the program
-/// unconditionally. Holding a modifier also works without an explicit
-/// modified binding: when the modified trigger has no binding of its own,
-/// the swipe falls back to the unmodified binding and fires with
-/// arbitration bypassed, so e.g. cmd plus a two-finger swipe switches tabs
-/// inside tmux with just the default bindings. The horizontal scroll copy
-/// of modifier-held motion is suppressed from its first frame, so the
-/// opening of a modified swipe never leaks to the program. When a
+/// shift (e.g. `cmd+swipe-left:2`), since a modified motion cannot collide
+/// with anyone's scrolling and is unambiguous intent aimed at the
+/// terminal, and actions prefixed with `force:`, which take the motion
+/// away from the program unconditionally. The horizontal scroll copy of
+/// motion held with a bound modifier is suppressed from its first frame,
+/// so the opening of a modified swipe never leaks to the program. When a
 /// two-finger swipe binding fires, the scroll produced by the same motion
 /// (including its inertial momentum tail) is suppressed.
+///
+/// A held modifier with no matching binding means plain scrolling: the
+/// motion, both axes, flows to the program (or scrollback) untouched.
+/// Shift is never a gesture modifier, so holding shift always scrolls -
+/// e.g. shift plus horizontal two-finger motion delivers horizontal
+/// scrolling to a program even when the unmodified swipe is bound.
 ///
 /// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
 /// `gesture =` alone resets all gesture bindings to the defaults, and
@@ -9215,15 +9197,6 @@ pub const MouseShiftCapture = enum {
     true,
     always,
     never,
-};
-
-/// See mouse-scroll-bypass-mod
-pub const ScrollBypassMod = enum {
-    none,
-    shift,
-    ctrl,
-    alt,
-    super,
 };
 
 /// See mouse-scroll-multiplier
