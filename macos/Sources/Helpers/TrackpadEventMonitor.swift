@@ -1,4 +1,5 @@
 import AppKit
+import TrackpadKit
 
 /// App-level trackpad gesture acquisition and routing.
 ///
@@ -30,6 +31,7 @@ final class TrackpadEventMonitor {
     static let debug = ProcessInfo.processInfo.environment["GHOSTTY_TRACKPAD_DEBUG"] != nil
 
     private let recognizer = TrackpadGestureRecognizer()
+    private let palmFilter = PalmFilter()
     private var monitor: Any?
     private var touchIds: [NSObject: Int] = [:]
     private var nextTouchId: Int = 1
@@ -106,16 +108,24 @@ final class TrackpadEventMonitor {
             samples.append(TouchSample(id: id, x: p.x, y: p.y, phase: phase))
         }
 
-        if Self.debug {
-            let phases = samples.map { $0.phase.rawValue }.joined(separator: ",")
-            Self.trace("frame [\(phases)] win=\(event.windowNumber)")
-        }
-
-        recognizer.process(TouchFrame(
+        let frame = TouchFrame(
             t: event.timestamp,
             w: deviceSize.width,
             h: deviceSize.height,
-            touches: samples))
+            touches: samples)
+        let filtered = palmFilter.process(frame)
+
+        if Self.debug {
+            let phases = samples.map { sample in
+                sample.phase.rawValue
+                    + (palmFilter.state(of: sample.id) == .finger ? "" : "!")
+            }.joined(separator: ",")
+            let palms = palmFilter.suppressedCount
+            Self.trace("frame [\(phases)]\(palms > 0 ? " palm=\(palms)" : "")"
+                + " win=\(event.windowNumber)")
+        }
+
+        if let filtered { recognizer.process(filtered) }
         syncTickTimer()
     }
 
@@ -165,6 +175,10 @@ final class TrackpadEventMonitor {
             timer.invalidate()
             tickTimer = nil
             touchIds.removeAll()
+            // Ids are remapped from here on; filter state keyed to the
+            // old ids would leak. Suspects still physically down simply
+            // re-enter classification when they next move.
+            palmFilter.reset()
         }
     }
 

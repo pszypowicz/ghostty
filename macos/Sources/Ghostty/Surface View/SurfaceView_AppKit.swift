@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import TrackpadKit
 import SwiftUI
 import CoreText
 import UserNotifications
