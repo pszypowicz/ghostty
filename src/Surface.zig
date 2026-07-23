@@ -3604,10 +3604,16 @@ fn swipeGesture(
     // if it enabled mouse reporting it receives wheel events on both axes,
     // and the vertical axis always has a consumer (scrollback or alternate
     // scroll arrows) even when it didn't. Only a horizontal two-finger swipe
-    // in a surface without mouse reporting is unowned motion. The `force:`
-    // flag skips all of this. Three or more fingers never produce scroll
-    // events, so there is nothing to arbitrate.
-    if (fingers == 2 and !value.flags.force) {
+    // in a surface without mouse reporting is unowned motion. Three or more
+    // fingers never produce scroll events, so there is nothing to arbitrate.
+    //
+    // Two escapes skip arbitration entirely: the `force:` flag, and a
+    // trigger that requires modifier keys. Modified triggers cannot collide
+    // with anyone's scrolling (plain scrolling never involves held
+    // modifiers), so they are unambiguous user intent aimed at the
+    // terminal.
+    const modified = @as(input.Mods.Backing, @bitCast(mods.binding())) != 0;
+    if (fingers == 2 and !value.flags.force and !modified) {
         if (direction == .up or direction == .down) {
             log.info("swipe skipped: vertical two-finger motion is scroll", .{});
             return;

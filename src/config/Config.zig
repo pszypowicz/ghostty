@@ -1945,12 +1945,14 @@ keybind: Keybinds = .{},
 /// arbitrated in favor of the running program: a two-finger swipe binding
 /// does not fire while the program has enabled mouse reporting (e.g. tmux
 /// with `mouse on`), and vertical two-finger swipes do not fire at all since
-/// vertical scroll always has a consumer. Prefix the action with `force:` to
-/// skip this arbitration and always fire, at the cost of taking that motion
-/// away from the program. Requiring a modifier (e.g. `cmd+swipe-left:2`) is
-/// a conflict-free alternative. When a two-finger swipe binding fires, the
-/// scroll produced by the same motion (including its inertial momentum tail)
-/// is suppressed.
+/// vertical scroll always has a consumer. Two kinds of binding skip this
+/// arbitration and always fire: triggers that require modifiers (e.g.
+/// `cmd+swipe-left:2`), since a modified motion cannot collide with anyone's
+/// scrolling and is unambiguous intent aimed at the terminal, and actions
+/// prefixed with `force:`, which take the motion away from the program
+/// unconditionally. When a two-finger swipe binding fires, the scroll
+/// produced by the same motion (including its inertial momentum tail) is
+/// suppressed.
 ///
 /// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
 /// `gesture =` alone resets all gesture bindings to the defaults, and
