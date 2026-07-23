@@ -964,6 +964,25 @@ palette: Palette = .{},
 ///   * `never`
 @"mouse-shift-capture": MouseShiftCapture = .false,
 
+/// The modifier key that bypasses mouse reporting for scrolling.
+///
+/// While the running program has mouse reporting enabled (e.g. tmux with
+/// `mouse on`), scroll events are delivered to the program as wheel
+/// reports. Holding this modifier while scrolling delivers plain scrolling
+/// instead, exactly as if the program had not captured the mouse: viewport
+/// scrollback in the primary screen, or arrow keys in an alternate screen
+/// with alternate scroll enabled. This mirrors the established shift+click
+/// convention for selection.
+///
+/// The bypass is latched per scroll sequence, so the inertial momentum
+/// tail of a bypassed scroll stays bypassed even when the modifier is
+/// released after the fingers lift.
+///
+/// Valid values are `none`, `shift`, `ctrl`, `alt`, and `super` (the cmd
+/// key on macOS). This should differ from any modifier used with `gesture`
+/// bindings, since those claim modified motion for the terminal.
+@"mouse-scroll-bypass-mod": ScrollBypassMod = .shift,
+
 /// Enable or disable mouse reporting. When set to `false`, mouse events will
 /// not be reported to terminal applications even if they request it. This
 /// allows you to always use the mouse for selection and other terminal UI
@@ -9196,6 +9215,15 @@ pub const MouseShiftCapture = enum {
     true,
     always,
     never,
+};
+
+/// See mouse-scroll-bypass-mod
+pub const ScrollBypassMod = enum {
+    none,
+    shift,
+    ctrl,
+    alt,
+    super,
 };
 
 /// See mouse-scroll-multiplier

@@ -308,6 +308,7 @@ const DerivedConfig = struct {
     gesture: configpkg.Gesturebinds,
     gesture_pinch_step: f64,
     gesture_deferred_indicator: bool,
+    mouse_scroll_bypass_mod: configpkg.Config.ScrollBypassMod,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -390,6 +391,7 @@ const DerivedConfig = struct {
             .gesture = try config.gesture.clone(alloc),
             .gesture_pinch_step = config.@"gesture-pinch-step",
             .gesture_deferred_indicator = config.@"gesture-deferred-indicator",
+            .mouse_scroll_bypass_mod = config.@"mouse-scroll-bypass-mod",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3724,6 +3726,25 @@ pub fn scrollCallback(
         break :xoff xoff_raw;
     };
 
+    // Modifier-held scrolling bypasses mouse reporting: the user is asking
+    // for plain scrolling regardless of what the program captured. Live
+    // events follow the modifier per event; the latch is app-scoped so the
+    // sequence's inertial momentum tail (whose events arrive after the
+    // modifier is typically released, possibly at a different surface)
+    // stays with the consumer the sequence started with.
+    const bypass_reporting = bypass: {
+        if (scroll_mods.momentum != .none) break :bypass self.app.scroll_bypass_latch;
+        const held = switch (self.config.mouse_scroll_bypass_mod) {
+            .none => false,
+            .shift => scroll_mods.mods.shift,
+            .ctrl => scroll_mods.mods.ctrl,
+            .alt => scroll_mods.mods.alt,
+            .super => scroll_mods.mods.super,
+        };
+        self.app.scroll_bypass_latch = held;
+        break :bypass held;
+    };
+
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
 
@@ -3812,10 +3833,15 @@ pub fn scrollCallback(
         self.renderer_state.mutex.lock();
         defer self.renderer_state.mutex.unlock();
 
+        // Whether the program receives this scroll as mouse reports. The
+        // bypass modifier makes the event behave as if the program had not
+        // captured the mouse at all.
+        const reporting = !bypass_reporting and self.isMouseReporting();
+
         // If we have an active mouse reporting mode, clear the selection.
         // The selection can occur if the user uses the shift mod key to
         // override mouse grabbing from the window.
-        if (self.isMouseReporting()) {
+        if (reporting) {
             try self.setSelection(null);
         }
 
@@ -3824,7 +3850,7 @@ pub fn scrollCallback(
         // (1) alt screen (2) no explicit mouse reporting and (3) alt
         // scroll mode enabled.
         if (self.io.terminal.screens.active_key == .alternate and
-            self.io.terminal.flags.mouse_event == .none and
+            (self.io.terminal.flags.mouse_event == .none or bypass_reporting) and
             self.io.terminal.modes.get(.mouse_alternate_scroll))
         {
             if (y.delta != 0) {
@@ -3858,7 +3884,7 @@ pub fn scrollCallback(
         // the normal logic.
 
         // If we're scrolling up or down, then send a mouse event.
-        if (self.isMouseReporting()) {
+        if (reporting) {
             for (0..@abs(y.delta)) |_| {
                 const pos = try self.rt_surface.getCursorPos();
                 self.mouseReport(switch (y.direction()) {
