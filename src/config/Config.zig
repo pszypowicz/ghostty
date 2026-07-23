@@ -1952,7 +1952,12 @@ keybind: Keybinds = .{},
 /// `cmd+swipe-left:2`), since a modified motion cannot collide with anyone's
 /// scrolling and is unambiguous intent aimed at the terminal, and actions
 /// prefixed with `force:`, which take the motion away from the program
-/// unconditionally. When a two-finger swipe binding fires, the scroll
+/// unconditionally. Holding a modifier also works without an explicit
+/// modified binding: when the modified trigger has no binding of its own,
+/// the swipe falls back to the unmodified binding and fires with
+/// arbitration bypassed, so e.g. cmd plus a two-finger swipe switches tabs
+/// inside tmux with just the default bindings. When a two-finger swipe
+/// binding fires, the scroll
 /// produced by the same motion (including its inertial momentum tail) is
 /// suppressed.
 ///

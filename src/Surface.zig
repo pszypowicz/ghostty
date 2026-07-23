@@ -3590,11 +3590,25 @@ fn swipeGesture(
         .none => return,
     };
 
+    const bmods = mods.binding();
+    const modified = @as(input.Mods.Backing, @bitCast(bmods)) != 0;
+
+    // The exact trigger wins, so explicit modified bindings can do their own
+    // thing. A held modifier without a binding of its own falls back to the
+    // unmodified binding: the user holding a modifier while swiping has
+    // already said the gesture is aimed at the terminal, so "hold a modifier
+    // to punch through arbitration" works without extra configuration.
     const value = self.config.gesture.get(.{
         .gesture = gesture,
         .fingers = fingers,
-        .mods = mods.binding(),
-    }) orelse {
+        .mods = bmods,
+    }) orelse fallback: {
+        if (modified) {
+            if (self.config.gesture.get(.{
+                .gesture = gesture,
+                .fingers = fingers,
+            })) |unmodified| break :fallback unmodified;
+        }
         log.info("swipe unbound gesture={} fingers={}", .{ gesture, fingers });
         return;
     };
@@ -3608,11 +3622,10 @@ fn swipeGesture(
     // fingers never produce scroll events, so there is nothing to arbitrate.
     //
     // Two escapes skip arbitration entirely: the `force:` flag, and a
-    // trigger that requires modifier keys. Modified triggers cannot collide
-    // with anyone's scrolling (plain scrolling never involves held
-    // modifiers), so they are unambiguous user intent aimed at the
-    // terminal.
-    const modified = @as(input.Mods.Backing, @bitCast(mods.binding())) != 0;
+    // physically modified gesture (whether it matched an explicit modified
+    // binding or fell back to the unmodified one). Modified motion cannot
+    // collide with anyone's scrolling, since plain scrolling never involves
+    // held modifiers.
     if (fingers == 2 and !value.flags.force and !modified) {
         if (direction == .up or direction == .down) {
             log.info("swipe skipped: vertical two-finger motion is scroll", .{});
