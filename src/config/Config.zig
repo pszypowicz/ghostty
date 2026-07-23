@@ -964,6 +964,20 @@ palette: Palette = .{},
 ///   * `never`
 @"mouse-shift-capture": MouseShiftCapture = .false,
 
+/// The modifier key that is a message to the terminal itself rather than
+/// to the running program: holding it skips the gesture engine entirely so
+/// the motion flows as plain scrolling, and the modifier is stripped from
+/// any mouse reports the scroll produces, so the program receives clean,
+/// unmodified wheel events (e.g. vim scrolls normally instead of applying
+/// its shift-wheel page scrolling). Use it to reach a program's own
+/// scrolling on an axis whose unmodified motion is bound to a gesture,
+/// e.g. shift plus horizontal two-finger motion for horizontal scrolling.
+///
+/// Valid values are `none`, `shift`, `ctrl`, `alt`, and `super` (the cmd
+/// key on macOS). With `none`, every bindable modifier is available to
+/// gesture triggers instead.
+@"mouse-scroll-passthrough-mod": ScrollPassthroughMod = .shift,
+
 /// Enable or disable mouse reporting. When set to `false`, mouse events will
 /// not be reported to terminal applications even if they request it. This
 /// allows you to always use the mouse for selection and other terminal UI
@@ -9197,6 +9211,15 @@ pub const MouseShiftCapture = enum {
     true,
     always,
     never,
+};
+
+/// See mouse-scroll-passthrough-mod
+pub const ScrollPassthroughMod = enum {
+    none,
+    shift,
+    ctrl,
+    alt,
+    super,
 };
 
 /// See mouse-scroll-multiplier

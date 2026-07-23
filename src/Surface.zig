@@ -308,6 +308,7 @@ const DerivedConfig = struct {
     gesture: configpkg.Gesturebinds,
     gesture_pinch_step: f64,
     gesture_deferred_indicator: bool,
+    mouse_scroll_passthrough_mod: configpkg.Config.ScrollPassthroughMod,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -390,6 +391,7 @@ const DerivedConfig = struct {
             .gesture = try config.gesture.clone(alloc),
             .gesture_pinch_step = config.@"gesture-pinch-step",
             .gesture_deferred_indicator = config.@"gesture-deferred-indicator",
+            .mouse_scroll_passthrough_mod = config.@"mouse-scroll-passthrough-mod",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3558,6 +3560,34 @@ fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger
     };
 }
 
+fn scrollPassthroughHeld(
+    mod: configpkg.Config.ScrollPassthroughMod,
+    mods: input.Mods,
+) bool {
+    return switch (mod) {
+        .none => false,
+        .shift => mods.shift,
+        .ctrl => mods.ctrl,
+        .alt => mods.alt,
+        .super => mods.super,
+    };
+}
+
+fn scrollPassthroughStrip(
+    mod: configpkg.Config.ScrollPassthroughMod,
+    mods: input.Mods,
+) input.Mods {
+    var result = mods;
+    switch (mod) {
+        .none => {},
+        .shift => result.shift = false,
+        .ctrl => result.ctrl = false,
+        .alt => result.alt = false,
+        .super => result.super = false,
+    }
+    return result;
+}
+
 fn swipeGesture(
     self: *Surface,
     direction: input.Binding.GestureDirection,
@@ -3579,10 +3609,12 @@ fn swipeGesture(
     };
 
     const bmods = mods.binding();
-    // Shift is reserved for plain scrolling (an unbound modifier's motion
-    // is just scroll), so it is not a punch-through channel; the other
-    // bindable modifiers are.
-    const modified = bmods.ctrl or bmods.alt or bmods.super;
+
+    // The passthrough modifier addresses the terminal itself: skip the
+    // gesture engine so the motion flows as plain scroll.
+    if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, bmods)) return;
+
+    const modified = @as(input.Mods.Backing, @bitCast(bmods)) != 0;
 
     const value = self.config.gesture.get(.{
         .gesture = gesture,
@@ -3692,13 +3724,14 @@ pub fn scrollCallback(
         if (!scroll_mods.precision) break :xoff xoff_raw;
         if (scroll_mods.momentum != .none) break :xoff xoff_raw;
         const keys = scroll_mods.mods;
-        if (!(keys.ctrl or keys.alt or keys.super)) break :xoff xoff_raw;
         const held: input.Mods = .{
             .shift = keys.shift,
             .ctrl = keys.ctrl,
             .alt = keys.alt,
             .super = keys.super,
         };
+        if (@as(input.Mods.Backing, @bitCast(held)) == 0) break :xoff xoff_raw;
+        if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, held)) break :xoff xoff_raw;
         for ([_]input.Binding.Gesture{ .@"swipe-left", .@"swipe-right" }) |g| {
             if (self.config.gesture.get(.{
                 .gesture = g,
@@ -3849,7 +3882,10 @@ pub fn scrollCallback(
                 self.mouseReport(switch (y.direction()) {
                     .up_right => .four,
                     .down_left => .five,
-                }, .press, self.mouse.mods, pos);
+                }, .press, scrollPassthroughStrip(
+                    self.config.mouse_scroll_passthrough_mod,
+                    self.mouse.mods,
+                ), pos);
             }
 
             for (0..@abs(x.delta)) |_| {
@@ -3857,7 +3893,10 @@ pub fn scrollCallback(
                 self.mouseReport(switch (x.direction()) {
                     .up_right => .six,
                     .down_left => .seven,
-                }, .press, self.mouse.mods, pos);
+                }, .press, scrollPassthroughStrip(
+                    self.config.mouse_scroll_passthrough_mod,
+                    self.mouse.mods,
+                ), pos);
             }
 
             // If mouse reporting is on, we do not want to scroll the
