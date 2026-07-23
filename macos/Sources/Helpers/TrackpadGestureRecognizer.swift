@@ -6,6 +6,11 @@
 // replayable from disk and portable across a C boundary into another
 // apprt without changes.
 //
+// This file is kept identical with the standalone prototyping harness the
+// recognizer is developed and tuned in, whose live overlay and record and
+// replay tooling consume the DebugSnapshot API; hosts that don't visualize
+// simply don't call it.
+//
 // Model (mirrors Apple's LightTable/DualTouchTracker sample, not
 // NSGestureRecognizer - gesture recognizers do not receive trackpad
 // touches):

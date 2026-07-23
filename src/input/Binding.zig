@@ -1665,8 +1665,9 @@ pub const Gesture = enum {
     /// Two-finger double-tap (macOS "smart zoom"). A discrete, one-shot
     /// gesture with no direction or magnitude.
     @"smart-magnify",
-    /// Directional multi-finger swipes. The finger count is part of the
-    /// gesture trigger (see Gesturebinds.Trigger), not this enum.
+
+    // Directional multi-finger swipes. The finger count is part of the
+    // gesture trigger (see Gesturebinds.Trigger), not this enum.
     @"swipe-left",
     @"swipe-right",
     @"swipe-up",

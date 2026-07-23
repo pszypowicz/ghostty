@@ -615,22 +615,6 @@ extension Ghostty.Input {
     }
 }
 
-#if canImport(AppKit)
-extension Ghostty.Input.GestureEvent.Phase {
-    /// Create a gesture Phase from an NSEvent.Phase. Returns nil for phases
-    /// that don't map to a discrete gesture phase we handle.
-    init?(_ phase: NSEvent.Phase) {
-        switch phase {
-        case .began: self = .began
-        case .changed: self = .changed
-        case .ended: self = .ended
-        case .cancelled: self = .cancelled
-        default: return nil
-        }
-    }
-}
-#endif
-
 // MARK: Ghostty.Input.Mods
 
 extension Ghostty.Input {

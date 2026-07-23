@@ -212,11 +212,6 @@ pub fn get(self: Gesturebinds, trigger: Trigger) ?Value {
     return self.map.get(trigger);
 }
 
-/// The number of bindings in the map.
-pub fn count(self: Gesturebinds) usize {
-    return self.map.count();
-}
-
 /// Deep copy of the struct. Required by Config.
 pub fn clone(self: *const Gesturebinds, alloc: Allocator) Allocator.Error!Gesturebinds {
     var map: Map = .{};
@@ -355,7 +350,7 @@ test "init: defaults present" {
 
     var g: Gesturebinds = .{};
     try g.init(alloc);
-    try testing.expectEqual(@as(usize, 4), g.count());
+    try testing.expectEqual(@as(usize, 4), g.map.count());
     try testing.expect(g.get(.{ .gesture = .@"pinch-in" }).?.action == .decrease_font_size);
     try testing.expect(g.get(.{ .gesture = .@"pinch-out" }).?.action == .increase_font_size);
     try testing.expect(g.get(

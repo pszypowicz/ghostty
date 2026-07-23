@@ -141,12 +141,12 @@ class AppDelegate: NSObject,
 
     /// Manages updates
     let updateController = UpdateController()
-
-    /// App-level trackpad gesture acquisition and routing.
-    private let trackpadEventMonitor = TrackpadEventMonitor()
     var updateViewModel: UpdateViewModel {
         updateController.viewModel
     }
+
+    /// App-level trackpad gesture acquisition and routing.
+    private let trackpadEventMonitor = TrackpadEventMonitor()
 
     /// The elapsed time since the process was started
     var timeSinceLaunch: TimeInterval {

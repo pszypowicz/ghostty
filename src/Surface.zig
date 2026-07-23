@@ -3432,11 +3432,6 @@ const ScrollAmount = struct {
     }
 };
 
-/// Mouse scroll event. Negative is down, left. Positive is up, right.
-///
-/// "Natural scrolling" is a macOS term for inverting the scroll direction.
-/// This should be handled by the apprt implementation. At this layer,
-/// negative is always down, left.
 /// Called for trackpad/touchpad gestures. Continuous gestures are accumulated
 /// into discrete steps here and dispatched to the configured `gesture`
 /// bindings, reusing the same action machinery as keybinds.
@@ -3458,7 +3453,7 @@ pub fn gestureCallback(
 
     // The changed stream is high-frequency; everything else is a decision
     // point worth tracing when diagnosing gesture feel.
-    if (phase != .changed) log.info(
+    if (phase != .changed) log.debug(
         "gesture event kind={} direction={} fingers={} phase={}",
         .{ kind, direction, fingers, phase },
     );
@@ -3518,6 +3513,7 @@ fn pinchGesture(
             // The step is clamped in config finalization, but guard here too
             // so a non-positive value can never spin this loop forever.
             const step = @max(0.001, self.config.gesture_pinch_step);
+            const bmods = mods.binding();
             self.gesture.pinch_accumulator += amount;
             while (@abs(self.gesture.pinch_accumulator) >= step) {
                 // Consume one step, keeping the remainder so that a fast pinch
@@ -3533,7 +3529,7 @@ fn pinchGesture(
                     if (out) .@"pinch-out" else .@"pinch-in";
                 const value = self.config.gesture.get(.{
                     .gesture = g,
-                    .mods = mods.binding(),
+                    .mods = bmods,
                 }) orelse continue;
 
                 // A `once`-flagged action only fires a single time per gesture.
@@ -3604,7 +3600,7 @@ fn swipeGesture(
                 .fingers = fingers,
             })) |unmodified| break :fallback unmodified;
         }
-        log.info("swipe unbound gesture={} fingers={}", .{ gesture, fingers });
+        log.debug("swipe unbound gesture={} fingers={}", .{ gesture, fingers });
         return;
     };
 
@@ -3623,7 +3619,7 @@ fn swipeGesture(
     // held modifiers.
     if (fingers == 2 and !value.flags.force and !modified) {
         if (direction == .up or direction == .down) {
-            log.info("swipe skipped: vertical two-finger motion is scroll", .{});
+            log.debug("swipe skipped: vertical two-finger motion is scroll", .{});
             return;
         }
 
@@ -3633,7 +3629,7 @@ fn swipeGesture(
             break :reporting self.isMouseReporting();
         };
         if (mouse_reporting) {
-            log.info("swipe skipped: mouse reporting active", .{});
+            log.debug("swipe skipped: mouse reporting active", .{});
             // A deferred gesture is indistinguishable from a broken one
             // without feedback at exactly this moment.
             if (self.config.gesture_deferred_indicator) {
@@ -3653,12 +3649,17 @@ fn swipeGesture(
     // of the same motion (and its momentum tail) is dropped.
     self.app.gesture_scroll_claim = .active;
 
-    log.info("swipe fired gesture={} fingers={}", .{ gesture, fingers });
+    log.debug("swipe fired gesture={} fingers={}", .{ gesture, fingers });
     _ = self.performBindingAction(value.action) catch |err| {
         log.warn("error performing gesture action err={}", .{err});
     };
 }
 
+/// Mouse scroll event. Negative is down, left. Positive is up, right.
+///
+/// "Natural scrolling" is a macOS term for inverting the scroll direction.
+/// This should be handled by the apprt implementation. At this layer,
+/// negative is always down, left.
 pub fn scrollCallback(
     self: *Surface,
     xoff_raw: f64,

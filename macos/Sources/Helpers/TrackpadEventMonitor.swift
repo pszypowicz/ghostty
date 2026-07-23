@@ -86,15 +86,17 @@ final class TrackpadEventMonitor {
         for touch in touches {
             deviceSize = touch.deviceSize
             // identity is stable across the touch's lifetime and adopts
-            // NSCopying; a copy is the sanctioned dictionary key.
-            guard let key = touch.identity.copy(with: nil) as? NSObject else { continue }
+            // NSCopying; copies compare equal to the original, so lookups
+            // use the identity directly and only stored keys are copied
+            // (the sanctioned way to retain an identity beyond the event).
+            guard let key = touch.identity as? NSObject else { continue }
             let id: Int
             if let known = touchIds[key] {
                 id = known
             } else {
                 id = nextTouchId
                 nextTouchId += 1
-                touchIds[key] = id
+                touchIds[(key.copy() as? NSObject) ?? key] = id
             }
             let phase = Self.touchPhase(touch.phase)
             if phase == .ended || phase == .cancelled {

@@ -1090,11 +1090,8 @@ extension Ghostty {
 
         /// Set GHOSTTY_TRACKPAD_DEBUG to trace touch delivery and recognizer
         /// state to stderr (stderr survives being piped, stdout does not).
-        static let trackpadDebug =
-            ProcessInfo.processInfo.environment["GHOSTTY_TRACKPAD_DEBUG"] != nil
-
         private func trackpadTrace(_ message: @autoclosure () -> String) {
-            guard Self.trackpadDebug else { return }
+            guard TrackpadEventMonitor.debug else { return }
             let sid = UInt(bitPattern: ObjectIdentifier(self).hashValue) & 0xffff
             FileHandle.standardError.write(Data("trackpad[\(sid)]: \(message())\n".utf8))
         }
@@ -1104,13 +1101,7 @@ extension Ghostty {
         /// sticky target surface.
         func handleTrackpadGesture(_ event: GestureEvent, mods flags: NSEvent.ModifierFlags) {
             guard let surfaceModel else { return }
-            let phase: Ghostty.Input.GestureEvent.Phase
-            switch event.phase {
-            case .began: phase = .began
-            case .changed: phase = .changed
-            case .ended: phase = .ended
-            case .cancelled: phase = .cancelled
-            }
+            let phase = Ghostty.Input.GestureEvent.Phase(event.phase)
             let mods = Ghostty.ghosttyMods(flags)
 
             switch event.kind {
@@ -1137,17 +1128,9 @@ extension Ghostty {
                     phase: phase))
 
             case .swipe:
-                let direction: Ghostty.Input.GestureEvent.Direction
-                switch event.direction {
-                case .none: direction = .none
-                case .left: direction = .left
-                case .right: direction = .right
-                case .up: direction = .up
-                case .down: direction = .down
-                }
                 surfaceModel.sendGesture(.init(
                     kind: .swipe,
-                    direction: direction,
+                    direction: .init(event.direction),
                     fingers: UInt8(clamping: event.fingerCount),
                     mods: mods,
                     amount: event.magnitude,
@@ -2517,5 +2500,32 @@ class CachedValue<T> {
         }
 
         return result
+    }
+}
+
+// MARK: TrackpadGestureRecognizer Conversions
+
+extension Ghostty.Input.GestureEvent.Phase {
+    /// Convert from the trackpad recognizer's gesture phase.
+    init(_ phase: GestureEvent.Phase) {
+        switch phase {
+        case .began: self = .began
+        case .changed: self = .changed
+        case .ended: self = .ended
+        case .cancelled: self = .cancelled
+        }
+    }
+}
+
+extension Ghostty.Input.GestureEvent.Direction {
+    /// Convert from the trackpad recognizer's gesture direction.
+    init(_ direction: GestureEvent.Direction) {
+        switch direction {
+        case .none: self = .none
+        case .left: self = .left
+        case .right: self = .right
+        case .up: self = .up
+        case .down: self = .down
+        }
     }
 }

@@ -1077,12 +1077,11 @@ extension Ghostty {
         }
     }
 
-    // MARK: Readonly Badge
+    // MARK: Gesture Deferred Badge
 
-    /// A badge overlay that indicates a surface is in readonly mode.
-    /// Positioned in the top-right corner and styled to be noticeable but unobtrusive.
     /// Transient feedback that a configured trackpad gesture was deferred
     /// to the running program because it owns the motion (mouse reporting).
+    /// Positioned at the bottom center; bounced on repeated deferrals.
     struct GestureDeferredBadge: View {
         /// Bounce scale, applied to the capsule so it pops in place.
         var scale: CGFloat = 1.0
@@ -1108,6 +1107,10 @@ extension Ghostty {
         }
     }
 
+    // MARK: Readonly Badge
+
+    /// A badge overlay that indicates a surface is in readonly mode.
+    /// Positioned in the top-right corner and styled to be noticeable but unobtrusive.
     struct ReadonlyBadge: View {
         let onDisable: () -> Void
 

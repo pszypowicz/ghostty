@@ -1960,9 +1960,8 @@ keybind: Keybinds = .{},
 /// inside tmux with just the default bindings. The horizontal scroll copy
 /// of modifier-held motion is suppressed from its first frame, so the
 /// opening of a modified swipe never leaks to the program. When a
-/// two-finger swipe binding fires, the scroll
-/// produced by the same motion (including its inertial momentum tail) is
-/// suppressed.
+/// two-finger swipe binding fires, the scroll produced by the same motion
+/// (including its inertial momentum tail) is suppressed.
 ///
 /// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
 /// `gesture =` alone resets all gesture bindings to the defaults, and
@@ -4813,8 +4812,8 @@ pub fn finalize(self: *Config) !void {
     self.@"mouse-scroll-multiplier".precision = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".precision));
     self.@"mouse-scroll-multiplier".discrete = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".discrete));
 
-    // Clamp our gesture pinch step to a small positive minimum. A zero or
-    // negative value would cause the pinch accumulator loop to never terminate.
+    // Clamp our gesture pinch step to a small positive minimum: the pinch
+    // accumulator loop requires a positive step to make progress.
     self.@"gesture-pinch-step" = @max(0.001, self.@"gesture-pinch-step");
 
     // Clamp our split opacity
