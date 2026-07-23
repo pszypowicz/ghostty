@@ -167,6 +167,9 @@ extension Ghostty {
             ghostty_surface_gesture(
                 surface,
                 event.kind.cGesture,
+                event.direction.cDirection,
+                event.fingers,
+                event.mods,
                 event.amount,
                 event.phase.cPhase)
         }

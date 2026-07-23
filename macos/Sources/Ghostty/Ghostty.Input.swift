@@ -540,21 +540,46 @@ extension Ghostty.Input.Momentum {
 // MARK: Ghostty.Input.GestureEvent
 
 extension Ghostty.Input {
-    /// A trackpad/touchpad gesture event (e.g. pinch).
+    /// A trackpad/touchpad gesture event (e.g. pinch, swipe).
     struct GestureEvent {
-        let kind: Kind
-        let amount: Double
-        let phase: Phase
+        var kind: Kind
+        var direction: Direction = .none
+        var fingers: UInt8 = 0
+        var mods: ghostty_input_mods_e = GHOSTTY_MODS_NONE
+        var amount: Double = 0
+        var phase: Phase
 
         /// `ghostty_input_gesture_e` - The family of gesture.
         enum Kind {
             case pinch
             case smartMagnify
+            case swipe
 
             var cGesture: ghostty_input_gesture_e {
                 switch self {
                 case .pinch: GHOSTTY_GESTURE_PINCH
                 case .smartMagnify: GHOSTTY_GESTURE_SMART_MAGNIFY
+                case .swipe: GHOSTTY_GESTURE_SWIPE
+                }
+            }
+        }
+
+        /// `ghostty_input_gesture_direction_e` - The direction of a
+        /// directional gesture (swipe).
+        enum Direction {
+            case none
+            case left
+            case right
+            case up
+            case down
+
+            var cDirection: ghostty_input_gesture_direction_e {
+                switch self {
+                case .none: GHOSTTY_GESTURE_DIRECTION_NONE
+                case .left: GHOSTTY_GESTURE_DIRECTION_LEFT
+                case .right: GHOSTTY_GESTURE_DIRECTION_RIGHT
+                case .up: GHOSTTY_GESTURE_DIRECTION_UP
+                case .down: GHOSTTY_GESTURE_DIRECTION_DOWN
                 }
             }
         }
