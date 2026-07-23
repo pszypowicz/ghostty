@@ -1069,7 +1069,10 @@ extension Ghostty {
             let scrollEvent = Ghostty.Input.MouseScrollEvent(
                 x: x,
                 y: y,
-                mods: .init(precision: precision, momentum: .init(event.momentumPhase))
+                mods: .init(
+                    precision: precision,
+                    momentum: .init(event.momentumPhase),
+                    keys: Ghostty.ghosttyMods(event.modifierFlags))
             )
             surfaceModel.sendMouseScroll(scrollEvent)
         }

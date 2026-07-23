@@ -458,12 +458,24 @@ extension Ghostty.Input {
             return Momentum(rawValue: UInt8(momentumBits)) ?? .none
         }
 
-        init(precision: Bool = false, momentum: Momentum = .none) {
+        /// The bindable keyboard modifiers held during the event, as
+        /// ghostty_input_mods_e bits. The core uses these to arbitrate
+        /// modified trackpad motion against gesture bindings.
+        var keys: Int32 {
+            (rawValue >> 4) & 0b0000_1111
+        }
+
+        init(
+            precision: Bool = false,
+            momentum: Momentum = .none,
+            keys: ghostty_input_mods_e = GHOSTTY_MODS_NONE
+        ) {
             var value: Int32 = 0
             if precision {
                 value |= 0b0000_0001
             }
             value |= Int32(momentum.rawValue) << 1
+            value |= Int32(keys.rawValue & 0b0000_1111) << 4
             self.rawValue = value
         }
 

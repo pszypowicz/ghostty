@@ -1948,16 +1948,19 @@ keybind: Keybinds = .{},
 /// does not fire while the program has enabled mouse reporting (e.g. tmux
 /// with `mouse on`), and vertical two-finger swipes do not fire at all since
 /// vertical scroll always has a consumer. Two kinds of binding skip this
-/// arbitration and always fire: triggers that require modifiers (e.g.
-/// `cmd+swipe-left:2`), since a modified motion cannot collide with anyone's
-/// scrolling and is unambiguous intent aimed at the terminal, and actions
-/// prefixed with `force:`, which take the motion away from the program
+/// arbitration and always fire: triggers that require modifiers other than
+/// shift (e.g. `cmd+swipe-left:2` - shift keeps its established scroll
+/// meaning), since a modified motion cannot collide with anyone's scrolling
+/// and is unambiguous intent aimed at the terminal, and actions prefixed
+/// with `force:`, which take the motion away from the program
 /// unconditionally. Holding a modifier also works without an explicit
 /// modified binding: when the modified trigger has no binding of its own,
 /// the swipe falls back to the unmodified binding and fires with
 /// arbitration bypassed, so e.g. cmd plus a two-finger swipe switches tabs
-/// inside tmux with just the default bindings. When a two-finger swipe
-/// binding fires, the scroll
+/// inside tmux with just the default bindings. The horizontal scroll copy
+/// of modifier-held motion is suppressed from its first frame, so the
+/// opening of a modified swipe never leaks to the program. When a
+/// two-finger swipe binding fires, the scroll
 /// produced by the same motion (including its inertial momentum tail) is
 /// suppressed.
 ///

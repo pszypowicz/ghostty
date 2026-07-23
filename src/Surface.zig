@@ -3583,7 +3583,10 @@ fn swipeGesture(
     };
 
     const bmods = mods.binding();
-    const modified = @as(input.Mods.Backing, @bitCast(bmods)) != 0;
+    // Shift keeps its established scroll meaning (shift+scroll bypasses
+    // mouse reporting in terminals), so it is not a punch-through channel;
+    // the other bindable modifiers are.
+    const modified = bmods.ctrl or bmods.alt or bmods.super;
 
     // The exact trigger wins, so explicit modified bindings can do their own
     // thing. A held modifier without a binding of its own falls back to the
@@ -3658,11 +3661,11 @@ fn swipeGesture(
 
 pub fn scrollCallback(
     self: *Surface,
-    xoff: f64,
+    xoff_raw: f64,
     yoff: f64,
     scroll_mods: input.ScrollMods,
 ) !void {
-    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff, yoff, scroll_mods });
+    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff_raw, yoff, scroll_mods });
 
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
@@ -3686,6 +3689,39 @@ pub fn scrollCallback(
             self.app.gesture_scroll_claim = .none;
         },
     }
+
+    // Precise motion held with a punch-through modifier belongs to the
+    // gesture layer from its very first frame: the modifier declared the
+    // motion is aimed at the terminal before it moved, so its horizontal
+    // scroll copy is never forwarded. This closes the recognizer's commit
+    // deadzone, during which no claim exists yet and the opening of a
+    // modified swipe would otherwise leak to the program as wheel events.
+    // Shift keeps its established scroll meaning, and the vertical axis
+    // still scrolls so modified vertical motion isn't dead input.
+    const xoff: f64 = xoff: {
+        if (!scroll_mods.precision) break :xoff xoff_raw;
+        if (scroll_mods.momentum != .none) break :xoff xoff_raw;
+        const keys = scroll_mods.mods;
+        if (!(keys.ctrl or keys.alt or keys.super)) break :xoff xoff_raw;
+        const held: input.Mods = .{
+            .shift = keys.shift,
+            .ctrl = keys.ctrl,
+            .alt = keys.alt,
+            .super = keys.super,
+        };
+        for ([_]input.Binding.Gesture{ .@"swipe-left", .@"swipe-right" }) |g| {
+            if (self.config.gesture.get(.{
+                .gesture = g,
+                .fingers = 2,
+                .mods = held,
+            }) != null) break :xoff 0;
+            if (self.config.gesture.get(.{
+                .gesture = g,
+                .fingers = 2,
+            }) != null) break :xoff 0;
+        }
+        break :xoff xoff_raw;
+    };
 
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
