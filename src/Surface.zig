@@ -133,14 +133,6 @@ gesture: struct {
     /// Whether a `once`-flagged action has already fired during the current
     /// pinch gesture. Reset when a new gesture begins.
     pinch_once_fired: bool = false,
-
-    /// Scroll-claim state. A trackpad produces the same physical two-finger
-    /// motion as both scroll events and raw touch gestures. When a gesture
-    /// binding consumes a touch sequence, the sequence is "claimed": live
-    /// scroll events from the same motion are dropped, and after the fingers
-    /// lift the claim drains through the inertial momentum tail so leftover
-    /// inertia doesn't scroll whatever the gesture revealed.
-    scroll_claim: enum { none, active, momentum } = .none,
 } = .{},
 
 /// The terminal IO handler.
@@ -3474,8 +3466,8 @@ pub fn gestureCallback(
     // A new gesture beginning means any prior sequence is over. An active
     // claim at this point is stale (its release event was lost), so clear it
     // rather than letting it eat scroll forever.
-    if (phase == .began and self.gesture.scroll_claim == .active) {
-        self.gesture.scroll_claim = .none;
+    if (phase == .began and self.app.gesture_scroll_claim == .active) {
+        self.app.gesture_scroll_claim = .none;
     }
 
     switch (kind) {
@@ -3494,8 +3486,8 @@ pub fn gestureCallback(
     // The touch sequence ended; a claimed sequence drains through its
     // momentum tail before scroll resumes.
     if (phase == .ended or phase == .cancelled) {
-        if (self.gesture.scroll_claim == .active) {
-            self.gesture.scroll_claim = .momentum;
+        if (self.app.gesture_scroll_claim == .active) {
+            self.app.gesture_scroll_claim = .momentum;
         }
     }
 }
@@ -3518,7 +3510,7 @@ fn pinchGesture(
             if (self.config.gesture.get(.{ .gesture = .@"pinch-in", .mods = bmods }) != null or
                 self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null)
             {
-                self.gesture.scroll_claim = .active;
+                self.app.gesture_scroll_claim = .active;
             }
         },
 
@@ -3656,7 +3648,7 @@ fn swipeGesture(
 
     // The binding consumes the touch sequence: claim it so the scroll copy
     // of the same motion (and its momentum tail) is dropped.
-    self.gesture.scroll_claim = .active;
+    self.app.gesture_scroll_claim = .active;
 
     log.info("swipe fired gesture={} fingers={}", .{ gesture, fingers });
     _ = self.performBindingAction(value.action) catch |err| {
@@ -3683,12 +3675,15 @@ pub fn scrollCallback(
     // fingers are down) and must be dropped. After the fingers lift, the
     // claim keeps swallowing the sequence's inertial momentum tail; the
     // first non-momentum event is a fresh motion and releases the claim.
-    switch (self.gesture.scroll_claim) {
+    // The claim is app state because the claimed motion doesn't stay on one
+    // surface: a fired tab switch re-routes the sequence's remaining scroll
+    // and its momentum tail to the newly revealed surface.
+    switch (self.app.gesture_scroll_claim) {
         .none => {},
         .active => return,
         .momentum => {
             if (scroll_mods.momentum != .none) return;
-            self.gesture.scroll_claim = .none;
+            self.app.gesture_scroll_claim = .none;
         },
     }
 
