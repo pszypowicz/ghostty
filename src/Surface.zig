@@ -3462,9 +3462,13 @@ pub fn gestureCallback(
 
     // The passthrough modifier addresses the terminal itself: the gesture
     // engine stands down so the motion flows as plain scrolling. Ended and
-    // cancelled still pass so a committed gesture's claim can release.
+    // cancelled still pass for swipe and pinch so a committed gesture's
+    // claim can release; smart-magnify is discrete with no claim, so it is
+    // swallowed entirely - the passthrough modifier is never a gesture
+    // modifier.
     if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, mods.binding())) {
         if (phase == .began or phase == .changed) return;
+        if (kind == .smart_magnify) return;
     }
 
     // A new gesture beginning means any prior sequence is over. An active
@@ -3475,7 +3479,7 @@ pub fn gestureCallback(
     }
 
     switch (kind) {
-        .pinch => try self.pinchGesture(mods, amount, phase),
+        .pinch => self.pinchGesture(mods, amount, phase),
 
         // Discrete, one-shot gesture: fire the bound action once when the
         // gesture completes. A tap produces no scroll, so it never claims.
@@ -3501,7 +3505,7 @@ fn pinchGesture(
     mods: input.Mods,
     amount: f64,
     phase: input.Binding.GesturePhase,
-) !void {
+) void {
     switch (phase) {
         .began => {
             self.gesture.pinch_accumulator = 0;
@@ -3567,32 +3571,28 @@ fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger
     };
 }
 
+fn scrollPassthroughMask(mod: configpkg.Config.ScrollPassthroughMod) input.Mods {
+    return switch (mod) {
+        .none => .{},
+        .shift => .{ .shift = true },
+        .ctrl => .{ .ctrl = true },
+        .alt => .{ .alt = true },
+        .super => .{ .super = true },
+    };
+}
+
 fn scrollPassthroughHeld(
     mod: configpkg.Config.ScrollPassthroughMod,
     mods: input.Mods,
 ) bool {
-    return switch (mod) {
-        .none => false,
-        .shift => mods.shift,
-        .ctrl => mods.ctrl,
-        .alt => mods.alt,
-        .super => mods.super,
-    };
+    return mods.int() & scrollPassthroughMask(mod).int() != 0;
 }
 
 fn scrollPassthroughStrip(
     mod: configpkg.Config.ScrollPassthroughMod,
     mods: input.Mods,
 ) input.Mods {
-    var result = mods;
-    switch (mod) {
-        .none => {},
-        .shift => result.shift = false,
-        .ctrl => result.ctrl = false,
-        .alt => result.alt = false,
-        .super => result.super = false,
-    }
-    return result;
+    return mods.unset(scrollPassthroughMask(mod));
 }
 
 fn swipeGesture(
@@ -3695,19 +3695,23 @@ pub fn scrollCallback(
 
     // Trackpad gesture arbitration: a two-finger motion arrives both as raw
     // touches and as scroll events. If a gesture binding claimed the touch
-    // sequence, this event is the scroll copy of that same motion (a
-    // trackpad is one device; nothing else can scroll while the claimed
-    // fingers are down) and must be dropped. After the fingers lift, the
-    // claim keeps swallowing the sequence's inertial momentum tail; the
-    // first non-momentum event is a fresh motion and releases the claim.
+    // sequence, this event is the scroll copy of that same motion and must
+    // be dropped. The copy is always precision (it comes from the trackpad),
+    // so non-precision devices - a wheel mouse scrolling while the claimed
+    // fingers are down - pass through untouched. After the fingers lift,
+    // the claim keeps swallowing the sequence's inertial momentum tail; the
+    // first fresh motion releases it. The lifted sequence's own trailing
+    // event (zero delta, no momentum flag yet) must not: its ordering
+    // relative to the gesture-ended callback is not guaranteed.
     // The claim is app state because the claimed motion doesn't stay on one
     // surface: a fired tab switch re-routes the sequence's remaining scroll
     // and its momentum tail to the newly revealed surface.
     switch (self.app.gesture_scroll_claim) {
         .none => {},
-        .active => return,
+        .active => if (scroll_mods.precision) return,
         .momentum => {
             if (scroll_mods.momentum != .none) return;
+            if (xoff_raw == 0 and yoff == 0) return;
             self.app.gesture_scroll_claim = .none;
         },
     }
@@ -3877,15 +3881,24 @@ pub fn scrollCallback(
 
         // If we're scrolling up or down, then send a mouse event.
         if (self.isMouseReporting()) {
+            // The passthrough modifier is stripped only from precision
+            // (trackpad) scrolls: it exists to route trackpad motion past
+            // the gesture engine, and wheel devices never meet that
+            // engine, so their reports keep the held modifiers.
+            const report_mods = if (scroll_mods.precision)
+                scrollPassthroughStrip(
+                    self.config.mouse_scroll_passthrough_mod,
+                    self.mouse.mods,
+                )
+            else
+                self.mouse.mods;
+
             for (0..@abs(y.delta)) |_| {
                 const pos = try self.rt_surface.getCursorPos();
                 self.mouseReport(switch (y.direction()) {
                     .up_right => .four,
                     .down_left => .five,
-                }, .press, scrollPassthroughStrip(
-                    self.config.mouse_scroll_passthrough_mod,
-                    self.mouse.mods,
-                ), pos);
+                }, .press, report_mods, pos);
             }
 
             for (0..@abs(x.delta)) |_| {
@@ -3893,10 +3906,7 @@ pub fn scrollCallback(
                 self.mouseReport(switch (x.direction()) {
                     .up_right => .six,
                     .down_left => .seven,
-                }, .press, scrollPassthroughStrip(
-                    self.config.mouse_scroll_passthrough_mod,
-                    self.mouse.mods,
-                ), pos);
+                }, .press, report_mods, pos);
             }
 
             // If mouse reporting is on, we do not want to scroll the

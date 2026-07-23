@@ -1090,8 +1090,11 @@ extension Ghostty {
         // arbitration overlap, and the OS timing heuristics aren't worth
         // replicating.
 
-        /// Set GHOSTTY_TRACKPAD_DEBUG to trace touch delivery and recognizer
-        /// state to stderr (stderr survives being piped, stdout does not).
+        /// Set GHOSTTY_TRACKPAD_DEBUG to trace this surface's scroll
+        /// delivery to stderr (stderr survives being piped, stdout does
+        /// not) - the scroll copies and momentum tails are one half of
+        /// the gesture/scroll arbitration the app-level monitor logs the
+        /// other half of.
         private func trackpadTrace(_ message: @autoclosure () -> String) {
             guard TrackpadEventMonitor.debug else { return }
             let sid = UInt(bitPattern: ObjectIdentifier(self).hashValue) & 0xffff
@@ -1104,7 +1107,7 @@ extension Ghostty {
         func handleTrackpadGesture(_ event: GestureEvent, mods flags: NSEvent.ModifierFlags) {
             guard let surfaceModel else { return }
             let phase = Ghostty.Input.GestureEvent.Phase(event.phase)
-            let mods = Ghostty.ghosttyMods(flags)
+            let mods = Ghostty.Input.Mods(nsFlags: flags)
 
             switch event.kind {
             case .pinch:
@@ -1146,7 +1149,7 @@ extension Ghostty {
             // report it as a single completed event.
             surfaceModel.sendGesture(.init(
                 kind: .smartMagnify,
-                mods: Ghostty.ghosttyMods(event.modifierFlags),
+                mods: .init(nsFlags: event.modifierFlags),
                 phase: .ended))
         }
 

@@ -169,7 +169,7 @@ extension Ghostty {
                 event.kind.cGesture,
                 event.direction.cDirection,
                 event.fingers,
-                event.mods,
+                event.mods.cMods,
                 event.amount,
                 event.phase.cPhase)
         }

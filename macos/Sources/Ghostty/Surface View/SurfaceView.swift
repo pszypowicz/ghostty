@@ -1100,7 +1100,10 @@ extension Ghostty {
                 .background(.ultraThinMaterial, in: Capsule())
                 .foregroundStyle(.secondary)
                 .scaleEffect(scale)
-                .padding(.bottom, 12)
+                // Sits one slot above KeyStateIndicator's bottom-center
+                // position so an active key table pill and this badge
+                // never overlap.
+                .padding(.bottom, 44)
             }
             .frame(maxWidth: .infinity)
             .allowsHitTesting(false)

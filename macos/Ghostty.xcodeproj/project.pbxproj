@@ -1441,7 +1441,7 @@
 			repositoryURL = "https://github.com/pszypowicz/TrackpadKit";
 			requirement = {
 				kind = upToNextMinorVersion;
-				minimumVersion = 0.2.3;
+				minimumVersion = 0.2.5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -973,10 +973,18 @@ palette: Palette = .{},
 /// scrolling on an axis whose unmodified motion is bound to a gesture,
 /// e.g. shift plus horizontal two-finger motion for horizontal scrolling.
 ///
+/// Only precision (trackpad) scrolling is affected: wheel devices never
+/// meet the gesture engine, so their reports keep the held modifiers.
+/// The default is `shift` on macOS, where the gesture engine runs, and
+/// `none` elsewhere.
+///
 /// Valid values are `none`, `shift`, `ctrl`, `alt`, and `super` (the cmd
 /// key on macOS). With `none`, every bindable modifier is available to
 /// gesture triggers instead.
-@"mouse-scroll-passthrough-mod": ScrollPassthroughMod = .shift,
+@"mouse-scroll-passthrough-mod": ScrollPassthroughMod = switch (builtin.os.tag) {
+    .macos => .shift,
+    else => .none,
+},
 
 /// Enable or disable mouse reporting. When set to `false`, mouse events will
 /// not be reported to terminal applications even if they request it. This
@@ -1966,7 +1974,9 @@ keybind: Keybinds = .{},
 /// `cmd+swipe-left:2`), since a modified motion cannot collide with
 /// anyone's scrolling and is unambiguous intent aimed at the terminal, and
 /// actions prefixed with `force:`, which take the motion away from the
-/// program unconditionally. The horizontal scroll copy of
+/// program unconditionally. `force:` only means something on unmodified
+/// two-finger swipes - everywhere else no arbitration exists, so the
+/// flag parses but changes nothing. The horizontal scroll copy of
 /// motion held with a bound modifier is suppressed from its first frame,
 /// so the opening of a modified swipe never leaks to the program. When a
 /// two-finger swipe binding fires, the scroll produced by the same motion

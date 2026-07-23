@@ -140,10 +140,12 @@ pub fn parseCLI(self: *Gesturebinds, alloc: Allocator, input_: ?[]const u8) !voi
         return;
     }
 
-    // Parse leading flag prefixes, mirroring the keybind prefix-flag idiom
-    // in `Binding.Parser.parseFlags`. An unknown prefix is left for the
-    // action parser, since action names themselves use colons (e.g. `text:`,
-    // `csi:`).
+    // Parse leading flag prefixes. Keybinds put flags before the trigger
+    // (`performable:ctrl+c=copy`); gesture flags sit on the action side
+    // deliberately, because they scope how the action fires (`once` per
+    // gesture, `force` past arbitration), matching the action-prefix style
+    // of `text:`/`csi:`. An unknown prefix is left for the action parser,
+    // since action names themselves use colons.
     var flags: Flags = .{};
     while (std.mem.indexOfScalar(u8, rhs, ':')) |ci| {
         const prefix = rhs[0..ci];
@@ -175,6 +177,9 @@ fn parseTrigger(name: []const u8) !Trigger {
         const part = rem[0..plus];
         const m = inputpkg.Binding.parseModifierName(part) orelse
             return error.InvalidFormat;
+        // Lock modifiers can never match: lookups use the binding mods,
+        // which zero the locks - reject rather than accept a dead trigger.
+        if (m.caps_lock or m.num_lock) return error.InvalidFormat;
         // Repeat not allowed
         const cur: Mods.Backing = @bitCast(mods);
         const add: Mods.Backing = @bitCast(m);
@@ -301,6 +306,23 @@ test "parseCLI: discrete text action with once flag" {
     try testing.expect(v.flags.once);
     try testing.expect(v.action == .text);
     try testing.expectEqualStrings("\\x02s", v.action.text);
+}
+
+test "parseCLI: lock modifiers rejected" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var g: Gesturebinds = .{};
+    try testing.expectError(
+        error.InvalidFormat,
+        g.parseCLI(alloc, "caps_lock+swipe-left:2=next_tab"),
+    );
+    try testing.expectError(
+        error.InvalidFormat,
+        g.parseCLI(alloc, "num_lock+pinch-in=increase_font_size:1"),
+    );
 }
 
 test "parseCLI: invalid gesture name" {
@@ -488,9 +510,10 @@ test "formatEntry: swipe trigger with mods and fingers round-trips" {
         buf.written(),
     );
 
-    // The formatted entry parses back to the same trigger.
+    // The formatted entry parses back to the same binding.
     var g2: Gesturebinds = .{};
-    try g2.parseCLI(alloc, "super+swipe-left:2=force:next_tab");
+    const formatted = buf.written();
+    try g2.parseCLI(alloc, formatted["gesture = ".len .. formatted.len - 1]);
     try testing.expect(g.equal(g2));
 }
 

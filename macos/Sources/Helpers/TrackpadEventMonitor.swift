@@ -116,11 +116,14 @@ final class TrackpadEventMonitor {
         let filtered = palmFilter.process(frame)
 
         if Self.debug {
+            // "!" marks samples the palm filter withheld from the
+            // recognizer this frame, derived from the filtered output so
+            // the marker is exactly what the recognizer didn't see.
+            let passed = Set(filtered?.touches.map(\.id) ?? [])
             let phases = samples.map { sample in
-                sample.phase.rawValue
-                    + (palmFilter.state(of: sample.id) == .finger ? "" : "!")
+                sample.phase.rawValue + (passed.contains(sample.id) ? "" : "!")
             }.joined(separator: ",")
-            let palms = palmFilter.suppressedCount
+            let palms = samples.count - passed.count
             Self.trace("frame [\(phases)]\(palms > 0 ? " palm=\(palms)" : "")"
                 + " win=\(event.windowNumber)")
         }

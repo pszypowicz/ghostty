@@ -442,8 +442,9 @@ extension Ghostty.Input.MouseButton: AppEnum {
 extension Ghostty.Input {
     /// `ghostty_input_scroll_mods_t` - Scroll event modifiers
     ///
-    /// This is a packed bitmask that contains precision and momentum information
-    /// for scroll events, matching the Zig `ScrollMods` packed struct.
+    /// This is a packed bitmask that contains precision, momentum, and
+    /// held-key-modifier information for scroll events, matching the Zig
+    /// `ScrollMods` packed struct.
     struct ScrollMods {
         let rawValue: Int32
 
@@ -557,7 +558,7 @@ extension Ghostty.Input {
         var kind: Kind
         var direction: Direction = .none
         var fingers: UInt8 = 0
-        var mods: ghostty_input_mods_e = GHOSTTY_MODS_NONE
+        var mods: Mods = []
         var amount: Double = 0
         var phase: Phase
 

@@ -77,10 +77,7 @@ pub fn init(
         // where compiling a source package then fails with EACCES.
         // Absolute paths keep all products and intermediates under
         // macos/build where the app is expected.
-        const build_dir = try std.fs.path.join(
-            b.allocator,
-            &.{ b.build_root.path.?, "macos", "build" },
-        );
+        const build_dir = b.pathFromRoot("macos/build");
         step.addArg(b.fmt("SYMROOT={s}", .{build_dir}));
         step.addArg(b.fmt("OBJROOT={s}", .{build_dir}));
 

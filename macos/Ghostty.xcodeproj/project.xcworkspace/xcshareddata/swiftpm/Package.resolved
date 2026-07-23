@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pszypowicz/TrackpadKit",
       "state" : {
-        "revision" : "6ed82b75af0aa47f87c7b5ed40a32953aacc822f",
-        "version" : "0.2.3"
+        "revision" : "02abe027e21e01dff0793fe44b7c208708f1748c",
+        "version" : "0.2.5"
       }
     }
   ],
