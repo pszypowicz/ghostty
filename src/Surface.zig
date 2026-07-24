@@ -4859,6 +4859,8 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             }
         },
 
+        .tmux_command => |command| return try self.tmuxCommand(command),
+
         .cursor_key => |ck| {
             // We send a different sequence depending on if we're
             // in cursor keys mode. We're in "normal" mode if cursor
@@ -5639,6 +5641,24 @@ fn closingAction(action: input.Binding.Action) bool {
 
         else => false,
     };
+}
+
+/// Run a tmux command against the tmux session whose client is attached
+/// to this surface's tty, if any. Returns false when no tmux client is
+/// attached so the binding reports unperformed.
+fn tmuxCommand(self: *Surface, command: []const u8) !bool {
+    const tty_name = self.getProcessInfo(.tty_name) orelse {
+        log.warn("tmux command ignored: no tty name for surface", .{});
+        return false;
+    };
+
+    var arena = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena.deinit();
+    return internal_os.tmux.sessionCommand(
+        arena.allocator(),
+        tty_name,
+        command,
+    );
 }
 
 /// The portion of the screen to write for writeScreenFile.
