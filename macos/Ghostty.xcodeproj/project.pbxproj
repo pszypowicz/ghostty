@@ -14,7 +14,6 @@
 		819324642F24FF2100A9ED8F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A5B30538299BEAAB0047F10C /* Assets.xcassets */; };
 		8F3A9B4C2FA6B88000A18D13 /* Ghostty.sdef in Resources */ = {isa = PBXBuildFile; fileRef = 8F3A9B4B2FA6B88000A18D13 /* Ghostty.sdef */; };
 		9351BE8E3D22937F003B3499 /* nvim in Resources */ = {isa = PBXBuildFile; fileRef = 9351BE8E2D22937F003B3499 /* nvim */; };
-		A51BFC272B30F1B800E92F16 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A51BFC262B30F1B800E92F16 /* Sparkle */; };
 		5AF0ADE02F3100000000AB03 /* TrackpadKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5AF0ADE02F3100000000AB02 /* TrackpadKit */; };
 		A53D0C8E2B53B0EA00305CE6 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A5D495A1299BEC7E00DD1313 /* GhosttyKit.xcframework */; };
 		A53D0C952B53B4D800305CE6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A5B30538299BEAAB0047F10C /* Assets.xcassets */; };
@@ -201,14 +200,6 @@
 				"Features/Terminal/Window Styles/TitlebarTabsTahoeTerminalWindow.swift",
 				"Features/Terminal/Window Styles/TitlebarTabsVenturaTerminalWindow.swift",
 				"Features/Terminal/Window Styles/TransparentTitlebarTerminalWindow.swift",
-				Features/Update/UpdateBadge.swift,
-				Features/Update/UpdateController.swift,
-				Features/Update/UpdateDelegate.swift,
-				Features/Update/UpdateDriver.swift,
-				Features/Update/UpdatePill.swift,
-				Features/Update/UpdatePopoverView.swift,
-				Features/Update/UpdateSimulator.swift,
-				Features/Update/UpdateViewModel.swift,
 				"Ghostty/FullscreenMode+Extension.swift",
 				Ghostty/Ghostty.Error.swift,
 				Ghostty/Ghostty.Event.swift,
@@ -303,7 +294,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A51BFC272B30F1B800E92F16 /* Sparkle in Frameworks */,
 				5AF0ADE02F3100000000AB03 /* TrackpadKit in Frameworks */,
 				A56B880B2A840447007A0E29 /* Carbon.framework in Frameworks */,
 				A571AB1D2A206FCF00248498 /* GhosttyKit.xcframework in Frameworks */,
@@ -466,7 +456,6 @@
 			);
 			name = Ghostty;
 			packageProductDependencies = (
-				A51BFC262B30F1B800E92F16 /* Sparkle */,
 				5AF0ADE02F3100000000AB02 /* TrackpadKit */,
 			);
 			productName = Ghostty;
@@ -533,7 +522,6 @@
 			);
 			mainGroup = A5B30528299BEAAA0047F10C;
 			packageReferences = (
-				A51BFC252B30F1B700E92F16 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				5AF0ADE02F3100000000AB01 /* XCRemoteSwiftPackageReference "TrackpadKit" */,
 			);
 			productRefGroup = A5B30532299BEAAA0047F10C /* Products */;
@@ -1428,14 +1416,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		A51BFC252B30F1B700E92F16 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.5.1;
-			};
-		};
 		5AF0ADE02F3100000000AB01 /* XCRemoteSwiftPackageReference "TrackpadKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/pszypowicz/TrackpadKit";
@@ -1447,11 +1427,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A51BFC262B30F1B800E92F16 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A51BFC252B30F1B700E92F16 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
 		5AF0ADE02F3100000000AB02 /* TrackpadKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 5AF0ADE02F3100000000AB01 /* XCRemoteSwiftPackageReference "TrackpadKit" */;
