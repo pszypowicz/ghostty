@@ -94,6 +94,15 @@ pub fn init(self: *Gesturebinds, alloc: Allocator) !void {
         .{ .action = .{ .decrease_font_size = 1 } },
     );
 
+    // Smart magnify (two-finger double-tap) toggles a temporary font zoom,
+    // mirroring the macOS smart-zoom convention: tap to zoom in, tap again
+    // to return exactly to the pre-zoom size.
+    try self.map.put(
+        alloc,
+        .{ .gesture = .@"smart-magnify" },
+        .{ .action = .{ .toggle_font_zoom = 6 } },
+    );
+
     // Two-finger horizontal swipes switch tabs by default, following the
     // content metaphor used by Safari: fingers moving left reveal the tab to
     // the right. This is safe out of the box because arbitration defers to
@@ -362,6 +371,7 @@ test "parseCLI: empty value resets to defaults" {
     try g.parseCLI(alloc, "");
     try testing.expect(g.get(.{ .gesture = .@"pinch-in" }).?.action == .decrease_font_size);
     try testing.expect(g.get(.{ .gesture = .@"pinch-out" }).?.action == .increase_font_size);
+    try testing.expect(g.get(.{ .gesture = .@"smart-magnify" }).?.action == .toggle_font_zoom);
 }
 
 test "init: defaults present" {
@@ -372,9 +382,14 @@ test "init: defaults present" {
 
     var g: Gesturebinds = .{};
     try g.init(alloc);
-    try testing.expectEqual(@as(usize, 4), g.map.count());
+    try testing.expectEqual(@as(usize, 5), g.map.count());
     try testing.expect(g.get(.{ .gesture = .@"pinch-in" }).?.action == .decrease_font_size);
     try testing.expect(g.get(.{ .gesture = .@"pinch-out" }).?.action == .increase_font_size);
+    try testing.expect(g.get(.{ .gesture = .@"smart-magnify" }).?.action == .toggle_font_zoom);
+    try testing.expectEqual(
+        @as(f32, 6),
+        g.get(.{ .gesture = .@"smart-magnify" }).?.action.toggle_font_zoom,
+    );
     try testing.expect(g.get(
         .{ .gesture = .@"swipe-left", .fingers = 2 },
     ).?.action == .next_tab);
