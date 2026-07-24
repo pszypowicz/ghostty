@@ -48,6 +48,14 @@ extension Ghostty {
         // Maintain whether our window has focus (is key) or not
         @State private var windowFocus: Bool = true
 
+        // When non-nil, a configured trackpad gesture was just deferred to
+        // the running program and the transient feedback badge is showing.
+        @State private var gestureDeferredAt: Date?
+
+        // Scale of the deferred-gesture badge, bounced on every deferral so
+        // repeated swipes each get visible acknowledgment.
+        @State private var gestureBadgeScale: CGFloat = 1.0
+
         #if canImport(AppKit)
         // Observe SecureInput to detect when its enabled
         @ObservedObject private var secureInput = SecureInput.shared
@@ -132,6 +140,27 @@ extension Ghostty {
                     keySequence: surfaceView.keySequence
                 )
                 .zIndex(1)
+
+                // Transient feedback that a trackpad gesture was deferred to
+                // the running program: without it, a deliberately deferred
+                // gesture is indistinguishable from a broken one. Every
+                // deferral bounces the badge (the task re-runs per event and
+                // resets the linger), then it fades away.
+                if let deferredAt = gestureDeferredAt {
+                    GestureDeferredBadge(scale: gestureBadgeScale)
+                        .transition(.opacity)
+                        .task(id: deferredAt) {
+                            gestureBadgeScale = 1.15
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.55)) {
+                                gestureBadgeScale = 1.0
+                            }
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.easeOut(duration: 0.6)) {
+                                gestureDeferredAt = nil
+                            }
+                        }
+                }
 #endif
 
                 VStack(spacing: 0) {
@@ -207,6 +236,11 @@ extension Ghostty {
                 // This is disabled except on macOS because it uses AppKit drag/drop APIs.
                 SurfaceGrabHandle(surfaceView: surfaceView)
                 #endif
+            }
+            .onReceive(center.publisher(for: .ghosttyGestureDidDefer, object: surfaceView)) { _ in
+                withAnimation(.easeIn(duration: 0.1)) {
+                    gestureDeferredAt = Date()
+                }
             }
         }
     }
@@ -1040,6 +1074,39 @@ extension Ghostty {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Gesture Deferred Badge
+
+    /// Transient feedback that a configured trackpad gesture was deferred
+    /// to the running program because it owns the motion (mouse reporting).
+    /// Positioned at the bottom center; bounced on repeated deferrals.
+    struct GestureDeferredBadge: View {
+        /// Bounce scale, applied to the capsule so it pops in place.
+        var scale: CGFloat = 1.0
+
+        var body: some View {
+            VStack {
+                Spacer()
+                HStack(spacing: 5) {
+                    Image(systemName: "computermouse.fill")
+                        .font(.system(size: 12))
+                    Text("Gesture sent to app")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .foregroundStyle(.secondary)
+                .scaleEffect(scale)
+                // Sits one slot above KeyStateIndicator's bottom-center
+                // position so an active key table pill and this badge
+                // never overlap.
+                .padding(.bottom, 44)
+            }
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
         }
     }
 

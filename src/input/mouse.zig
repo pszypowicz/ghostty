@@ -1,4 +1,5 @@
 const std = @import("std");
+const key = @import("key.zig");
 
 /// The type of action associated with a mouse event. This is different
 /// from ButtonState because button state is simply the current state
@@ -96,7 +97,11 @@ pub const ScrollMods = packed struct(u8) {
     /// This is used to handle "inertial scrolling" (i.e. flicking).
     momentum: Momentum = .none,
 
-    _padding: u4 = 0,
+    /// The standard bindable modifier keys held during the event. Carried
+    /// so the core can arbitrate modified trackpad motion against gesture
+    /// bindings (see Surface.scrollCallback); apprts that cannot supply
+    /// this may leave it zeroed.
+    mods: key.Mods.Keys = .{},
 
     // For our own understanding
     test {
@@ -105,6 +110,14 @@ pub const ScrollMods = packed struct(u8) {
         try testing.expectEqual(
             @as(u8, @bitCast(ScrollMods{ .precision = true })),
             @as(u8, 0b0000_0001),
+        );
+        try testing.expectEqual(
+            @as(u8, @bitCast(ScrollMods{ .mods = .{ .shift = true } })),
+            @as(u8, 0b0001_0000),
+        );
+        try testing.expectEqual(
+            @as(u8, @bitCast(ScrollMods{ .mods = .{ .super = true } })),
+            @as(u8, 0b1000_0000),
         );
     }
 };

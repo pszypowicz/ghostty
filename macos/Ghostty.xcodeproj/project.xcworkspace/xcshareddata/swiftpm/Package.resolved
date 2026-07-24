@@ -1,5 +1,5 @@
 {
-  "originHash" : "e721da7f9826abdffcb6185e886155efa2514bd6234475f1afa893e29eb258d6",
+  "originHash" : "3589a944a2e381e94407e23510b830ebdad31a397f87ed059eba920164d0c232",
   "pins" : [
     {
       "identity" : "sparkle",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
         "version" : "2.9.0"
+      }
+    },
+    {
+      "identity" : "trackpadkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pszypowicz/TrackpadKit",
+      "state" : {
+        "revision" : "ac19e312c6079252a04c659f192764d53674cd96",
+        "version" : "0.2.6"
       }
     }
   ],

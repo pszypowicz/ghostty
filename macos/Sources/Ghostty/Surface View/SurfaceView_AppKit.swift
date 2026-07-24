@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import TrackpadKit
 import SwiftUI
 import CoreText
 import UserNotifications
@@ -216,6 +217,12 @@ extension Ghostty {
         /// Event monitor (see individual events for why)
         private var eventMonitor: Any?
 
+        /// The app-level TrackpadEventMonitor reports absolute pinch scale;
+        /// the core accumulates incremental deltas (magnify(with:)
+        /// semantics). This tracks the last reported scale to convert
+        /// between the two.
+        private var trackpadPinchScale: Double = 1.0
+
         // We need to support being a first responder so that we can get input events
         override var acceptsFirstResponder: Bool { return true }
 
@@ -239,6 +246,14 @@ extension Ghostty {
             // is non-zero so that our layer bounds are non-zero so that our renderer
             // can do SOMETHING.
             super.init(id: uuid, frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+
+            // Opt into raw trackpad touches. Gestures are recognized by the
+            // app-level TrackpadEventMonitor, but AppKit only generates the
+            // touch-bearing gesture events it observes when a view under the
+            // pointer accepts indirect touches. Resting touches (e.g. a
+            // thumb parked on the pad) stay filtered out by AppKit.
+            allowedTouchTypes = [.indirect]
+            wantsRestingTouches = false
 
             // Our cache of screen data
             cachedScreenContents = .init(duration: .milliseconds(500)) { [weak self] in
@@ -1033,6 +1048,12 @@ extension Ghostty {
         }
 
         override func scrollWheel(with event: NSEvent) {
+            trackpadTrace(String(
+                format: "scroll dx=%+.1f dy=%+.1f phase=%d momentum=%d keys=%d",
+                event.scrollingDeltaX, event.scrollingDeltaY,
+                event.phase.rawValue, event.momentumPhase.rawValue,
+                Ghostty.ghosttyMods(event.modifierFlags).rawValue & 0xF))
+
             guard let surfaceModel else { return }
 
             var x = event.scrollingDeltaX
@@ -1050,9 +1071,90 @@ extension Ghostty {
             let scrollEvent = Ghostty.Input.MouseScrollEvent(
                 x: x,
                 y: y,
-                mods: .init(precision: precision, momentum: .init(event.momentumPhase))
+                mods: .init(
+                    precision: precision,
+                    momentum: .init(event.momentumPhase),
+                    keys: Ghostty.ghosttyMods(event.modifierFlags))
             )
             surfaceModel.sendMouseScroll(scrollEvent)
+        }
+
+        // MARK: - Trackpad Gestures
+        //
+        // Pinch and swipe come from our own raw-NSTouch recognizer rather
+        // than the magnify:/swipe: callbacks. One recognizer sees both
+        // signals from the same fingers and arbitrates them with a single
+        // commit-and-lock policy, and the high-level swipe(with:) callback
+        // is unreliable (it doesn't fire at all on recent macOS). Smart
+        // magnify stays on its OS callback: it's a discrete tap with no
+        // arbitration overlap, and the OS timing heuristics aren't worth
+        // replicating.
+
+        /// Set GHOSTTY_TRACKPAD_DEBUG to trace this surface's scroll
+        /// delivery to stderr (stderr survives being piped, stdout does
+        /// not) - the scroll copies and momentum tails are one half of
+        /// the gesture/scroll arbitration the app-level monitor logs the
+        /// other half of.
+        private func trackpadTrace(_ message: @autoclosure () -> String) {
+            guard TrackpadEventMonitor.debug else { return }
+            let sid = UInt(bitPattern: ObjectIdentifier(self).hashValue) & 0xffff
+            FileHandle.standardError.write(Data("trackpad[\(sid)]: \(message())\n".utf8))
+        }
+
+        /// Called by the app-level TrackpadEventMonitor, which owns touch
+        /// acquisition and recognition and routes each gesture to its
+        /// sticky target surface.
+        func handleTrackpadGesture(_ event: GestureEvent, mods flags: NSEvent.ModifierFlags) {
+            guard let surfaceModel else { return }
+            let phase = Ghostty.Input.GestureEvent.Phase(event.phase)
+            let mods = Ghostty.Input.Mods(nsFlags: flags)
+
+            switch event.kind {
+            case .pinch:
+                // Convert the recognizer's absolute scale into incremental
+                // deltas. Seeding at 1.0 on began makes the first changed
+                // delta include the pre-commit scale change, so no
+                // magnification is lost to the recognizer's deadzone.
+                let delta: Double
+                switch event.phase {
+                case .began:
+                    trackpadPinchScale = 1.0
+                    delta = 0
+                case .changed:
+                    delta = event.magnitude - trackpadPinchScale
+                    trackpadPinchScale = event.magnitude
+                case .ended, .cancelled:
+                    delta = 0
+                }
+                surfaceModel.sendGesture(.init(
+                    kind: .pinch,
+                    mods: mods,
+                    amount: delta,
+                    phase: phase))
+
+            case .swipe:
+                // The swipe preference is read per event: it has no change
+                // notification, and reading it live makes a System Settings
+                // change apply to the very next gesture.
+                surfaceModel.sendGesture(.init(
+                    kind: .swipe,
+                    direction: .init(event.direction),
+                    fingers: UInt8(clamping: event.fingerCount),
+                    mods: mods,
+                    amount: event.magnitude,
+                    phase: phase,
+                    swipeTracking: NSEvent.isSwipeTrackingFromScrollEventsEnabled))
+            }
+        }
+
+        override func smartMagnify(with event: NSEvent) {
+            guard let surfaceModel else { return }
+            // Two-finger double-tap is a discrete, one-shot gesture, so we
+            // report it as a single completed event.
+            surfaceModel.sendGesture(.init(
+                kind: .smartMagnify,
+                mods: .init(nsFlags: event.modifierFlags),
+                phase: .ended))
         }
 
         override func pressureChange(with event: NSEvent) {
@@ -2407,5 +2509,32 @@ class CachedValue<T> {
         }
 
         return result
+    }
+}
+
+// MARK: TrackpadGestureRecognizer Conversions
+
+extension Ghostty.Input.GestureEvent.Phase {
+    /// Convert from the trackpad recognizer's gesture phase.
+    init(_ phase: GestureEvent.Phase) {
+        switch phase {
+        case .began: self = .began
+        case .changed: self = .changed
+        case .ended: self = .ended
+        case .cancelled: self = .cancelled
+        }
+    }
+}
+
+extension Ghostty.Input.GestureEvent.Direction {
+    /// Convert from the trackpad recognizer's gesture direction.
+    init(_ direction: GestureEvent.Direction) {
+        switch direction {
+        case .none: self = .none
+        case .left: self = .left
+        case .right: self = .right
+        case .up: self = .up
+        case .down: self = .down
+        }
     }
 }

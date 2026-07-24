@@ -9,6 +9,7 @@ const build_config = @import("../build_config.zig");
 const uucode = @import("uucode");
 const EntryFormatter = @import("../config/formatter.zig").EntryFormatter;
 const deepEqual = @import("../datastruct/comparison.zig").deepEqual;
+const lib = @import("../lib/main.zig");
 const key = @import("key.zig");
 const key_mods = @import("key_mods.zig");
 const KeyEvent = key.KeyEvent;
@@ -405,6 +406,23 @@ pub const Action = union(enum) {
     /// For example, `set_font_size:14.5` will set the font size
     /// to 14.5 points.
     set_font_size: f32,
+
+    /// Toggle a temporary font zoom. The first invocation saves the current
+    /// font size and increases it by the specified amount in points (pt).
+    /// The next invocation restores the saved size exactly.
+    ///
+    /// While zoomed, `increase_font_size` and `decrease_font_size` adjust
+    /// the zoomed size without discarding the saved size, so the next
+    /// invocation still returns to the pre-zoom size. `reset_font_size`
+    /// and `set_font_size` discard the saved size.
+    ///
+    /// For example, `toggle_font_zoom:6` will increase the font size by
+    /// 6 points, and invoking it again will restore the size from before
+    /// the zoom.
+    ///
+    /// On macOS this is bound to the `smart-magnify` trackpad gesture
+    /// (two-finger double-tap) by default. See the `gesture` configuration.
+    toggle_font_zoom: f32,
 
     /// Start a search for the given text. If the text is empty, then
     /// the search is canceled. A canceled search will not disable any GUI
@@ -1368,6 +1386,7 @@ pub const Action = union(enum) {
             .decrease_font_size,
             .reset_font_size,
             .set_font_size,
+            .toggle_font_zoom,
             .prompt_surface_title,
             .prompt_tab_title,
             .set_surface_title,
@@ -1653,6 +1672,87 @@ pub const Action = union(enum) {
     const bindingSetEqual = equal;
 };
 
+/// A trackpad/touchpad gesture that can be bound to an action via the
+/// `gesture` config option. These are the discrete, directional triggers the
+/// core derives from continuous platform gesture events.
+///
+/// This is intentionally kept separate from `Trigger` (which is keyboard- and
+/// C-ABI-facing) so gestures don't leak into key sequences, tables, or menus.
+pub const Gesture = enum {
+    @"pinch-in",
+    @"pinch-out",
+    /// Two-finger double-tap (macOS "smart zoom"). A discrete, one-shot
+    /// gesture with no direction or magnitude.
+    @"smart-magnify",
+
+    // Directional multi-finger swipes. The finger count is part of the
+    // gesture trigger (see Gesturebinds.Trigger), not this enum.
+    @"swipe-left",
+    @"swipe-right",
+    @"swipe-up",
+    @"swipe-down",
+};
+
+/// The family of gesture as delivered by an apprt. The specific directional
+/// `Gesture` trigger is derived by the core: for pinch from the sign of the
+/// reported amount, for swipe from the reported direction. Values must stay
+/// in sync with `ghostty_input_gesture_e` in include/ghostty.h.
+pub const GestureKind = enum(c_int) {
+    pinch,
+    smart_magnify,
+    swipe,
+};
+
+/// The direction of a directional gesture (swipe). Values must stay in sync
+/// with `ghostty_input_gesture_direction_e` in include/ghostty.h.
+pub const GestureDirection = enum(c_int) {
+    none,
+    left,
+    right,
+    up,
+    down,
+};
+
+/// The phase of a continuous gesture. Values must stay in sync with
+/// `ghostty_input_gesture_phase_e` in include/ghostty.h.
+pub const GesturePhase = enum(c_int) {
+    began,
+    changed,
+    ended,
+    cancelled,
+};
+
+test "ghostty.h gesture enums" {
+    try lib.checkGhosttyHEnum(GestureKind, "GHOSTTY_GESTURE_");
+    try lib.checkGhosttyHEnum(GestureDirection, "GHOSTTY_GESTURE_DIRECTION_");
+    try lib.checkGhosttyHEnum(GesturePhase, "GHOSTTY_GESTURE_PHASE_");
+}
+
+/// Parse a single trigger part as a modifier name (including aliases),
+/// returning a Mods value with only that modifier set, or null if the part
+/// is not a modifier name. Shared by keybind and gesture trigger parsing so
+/// both use the same modifier grammar.
+pub fn parseModifierName(part: []const u8) ?key.Mods {
+    const modsInfo = @typeInfo(key.Mods).@"struct";
+    inline for (modsInfo.fields) |field| {
+        if (field.type == bool) {
+            if (std.mem.eql(u8, part, field.name)) {
+                var mods: key.Mods = .{};
+                @field(mods, field.name) = true;
+                return mods;
+            }
+        }
+    }
+    inline for (key_mods.alias) |pair| {
+        if (std.mem.eql(u8, part, pair[0])) {
+            var mods: key.Mods = .{};
+            @field(mods, @tagName(pair[1])) = true;
+            return mods;
+        }
+    }
+    return null;
+}
+
 /// Trigger is the associated key state that can trigger an action.
 /// This is an extern struct because this is also used in the C API.
 ///
@@ -1712,28 +1812,14 @@ pub const Trigger = struct {
             const part = rem[0..idx];
             rem = if (idx >= rem.len) "" else rem[idx + 1 ..];
 
-            // Check if its a modifier
-            const modsInfo = @typeInfo(key.Mods).@"struct";
-            inline for (modsInfo.fields) |field| {
-                if (field.type == bool) {
-                    if (std.mem.eql(u8, part, field.name)) {
-                        // Repeat not allowed
-                        if (@field(result.mods, field.name)) return Error.InvalidFormat;
-                        @field(result.mods, field.name) = true;
-                        continue :loop;
-                    }
-                }
-            }
-
-            // Alias modifiers
-            inline for (key_mods.alias) |pair| {
-                if (std.mem.eql(u8, part, pair[0])) {
-                    // Repeat not allowed
-                    const field = @tagName(pair[1]);
-                    if (@field(result.mods, field)) return Error.InvalidFormat;
-                    @field(result.mods, field) = true;
-                    continue :loop;
-                }
+            // Check if its a modifier (including aliases)
+            if (parseModifierName(part)) |m| {
+                // Repeat not allowed
+                const cur: key.Mods.Backing = @bitCast(result.mods);
+                const add: key.Mods.Backing = @bitCast(m);
+                if (cur & add != 0) return Error.InvalidFormat;
+                result.mods = @bitCast(cur | add);
+                continue :loop;
             }
 
             // Anything after this point is a key and we only support
@@ -4521,6 +4607,16 @@ test "parse: set_font_size" {
         const binding = try parseSingle("a=set_font_size:13.5");
         try testing.expect(binding.action == .set_font_size);
         try testing.expectEqual(13.5, binding.action.set_font_size);
+    }
+}
+
+test "parse: toggle_font_zoom" {
+    const testing = std.testing;
+
+    {
+        const binding = try parseSingle("a=toggle_font_zoom:6");
+        try testing.expect(binding.action == .toggle_font_zoom);
+        try testing.expectEqual(6, binding.action.toggle_font_zoom);
     }
 }
 
