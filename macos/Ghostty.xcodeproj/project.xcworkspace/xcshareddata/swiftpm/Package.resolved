@@ -1,15 +1,6 @@
 {
-  "originHash" : "3589a944a2e381e94407e23510b830ebdad31a397f87ed059eba920164d0c232",
+  "originHash" : "541219a41db60d60d145861f25ecb2bfb3b9b1761246afba96b9338678819a31",
   "pins" : [
-    {
-      "identity" : "sparkle",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/sparkle-project/Sparkle",
-      "state" : {
-        "revision" : "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
-        "version" : "2.9.0"
-      }
-    },
     {
       "identity" : "trackpadkit",
       "kind" : "remoteSourceControl",
