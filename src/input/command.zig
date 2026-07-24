@@ -229,6 +229,12 @@ fn actionCommands(action: Action.Key) []const Command {
             .description = "Reset the font size to the default.",
         }},
 
+        .toggle_font_zoom => comptime &.{.{
+            .action = .{ .toggle_font_zoom = 6 },
+            .title = "Toggle Font Zoom",
+            .description = "Zoom the font size in, or restore the pre-zoom size.",
+        }},
+
         .clear_screen => comptime &.{.{
             .action = .clear_screen,
             .title = "Clear Screen",

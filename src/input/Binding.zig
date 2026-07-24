@@ -407,6 +407,23 @@ pub const Action = union(enum) {
     /// to 14.5 points.
     set_font_size: f32,
 
+    /// Toggle a temporary font zoom. The first invocation saves the current
+    /// font size and increases it by the specified amount in points (pt).
+    /// The next invocation restores the saved size exactly.
+    ///
+    /// While zoomed, `increase_font_size` and `decrease_font_size` adjust
+    /// the zoomed size without discarding the saved size, so the next
+    /// invocation still returns to the pre-zoom size. `reset_font_size`
+    /// and `set_font_size` discard the saved size.
+    ///
+    /// For example, `toggle_font_zoom:6` will increase the font size by
+    /// 6 points, and invoking it again will restore the size from before
+    /// the zoom.
+    ///
+    /// On macOS this is bound to the `smart-magnify` trackpad gesture
+    /// (two-finger double-tap) by default. See the `gesture` configuration.
+    toggle_font_zoom: f32,
+
     /// Start a search for the given text. If the text is empty, then
     /// the search is canceled. A canceled search will not disable any GUI
     /// elements showing search. For that, the explicit end_search binding
@@ -1369,6 +1386,7 @@ pub const Action = union(enum) {
             .decrease_font_size,
             .reset_font_size,
             .set_font_size,
+            .toggle_font_zoom,
             .prompt_surface_title,
             .prompt_tab_title,
             .set_surface_title,
@@ -4589,6 +4607,16 @@ test "parse: set_font_size" {
         const binding = try parseSingle("a=set_font_size:13.5");
         try testing.expect(binding.action == .set_font_size);
         try testing.expectEqual(13.5, binding.action.set_font_size);
+    }
+}
+
+test "parse: toggle_font_zoom" {
+    const testing = std.testing;
+
+    {
+        const binding = try parseSingle("a=toggle_font_zoom:6");
+        try testing.expect(binding.action == .toggle_font_zoom);
+        try testing.expectEqual(6, binding.action.toggle_font_zoom);
     }
 }
 
