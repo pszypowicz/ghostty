@@ -1170,7 +1170,8 @@ GHOSTTY_API void ghostty_surface_gesture(ghostty_surface_t,
                                             uint8_t,
                                             ghostty_input_mods_e,
                                             double,
-                                            ghostty_input_gesture_phase_e);
+                                            ghostty_input_gesture_phase_e,
+                                            bool);
 GHOSTTY_API void ghostty_surface_ime_point(ghostty_surface_t, double*, double*, double*, double*);
 GHOSTTY_API void ghostty_surface_request_close(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_split(ghostty_surface_t, ghostty_action_split_direction_e);

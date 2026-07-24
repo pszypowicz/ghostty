@@ -171,7 +171,8 @@ extension Ghostty {
                 event.fingers,
                 event.mods.cMods,
                 event.amount,
-                event.phase.cPhase)
+                event.phase.cPhase,
+                event.swipeTracking)
         }
 
         /// Perform a keybinding action.
