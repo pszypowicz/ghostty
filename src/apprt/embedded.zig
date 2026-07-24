@@ -862,6 +862,7 @@ pub const Surface = struct {
         mods: input.Mods,
         amount: f64,
         phase: input.Binding.GesturePhase,
+        swipe_tracking: bool,
     ) void {
         self.core_surface.gestureCallback(
             kind,
@@ -870,6 +871,7 @@ pub const Surface = struct {
             mods,
             amount,
             phase,
+            swipe_tracking,
         ) catch |err| {
             log.err("error in gesture callback err={}", .{err});
             return;
@@ -1935,6 +1937,7 @@ pub const CAPI = struct {
         mods_raw: c_int,
         amount: f64,
         phase_raw: c_int,
+        swipe_tracking: bool,
     ) void {
         const kind = std.meta.intToEnum(
             input.Binding.GestureKind,
@@ -1962,7 +1965,15 @@ pub const CAPI = struct {
             @truncate(@as(c_uint, @bitCast(mods_raw))),
         ));
 
-        surface.gestureCallback(kind, direction, fingers, mods, amount, phase);
+        surface.gestureCallback(
+            kind,
+            direction,
+            fingers,
+            mods,
+            amount,
+            phase,
+            swipe_tracking,
+        );
     }
 
     export fn ghostty_surface_ime_point(

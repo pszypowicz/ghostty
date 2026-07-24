@@ -3437,6 +3437,12 @@ const ScrollAmount = struct {
 /// Called for trackpad/touchpad gestures. Continuous gestures are accumulated
 /// into discrete steps here and dispatched to the configured `gesture`
 /// bindings, reusing the same action machinery as keybinds.
+///
+/// `swipe_tracking` is the platform user preference for treating two-finger
+/// scroll motion as navigation swipes (macOS "Swipe between pages"). The
+/// apprt reads it per event because the platform offers no change
+/// notification; only swipe arbitration consults it. Platforms without such
+/// a preference pass true.
 pub fn gestureCallback(
     self: *Surface,
     kind: input.Binding.GestureKind,
@@ -3445,6 +3451,7 @@ pub fn gestureCallback(
     mods: input.Mods,
     amount: f64,
     phase: input.Binding.GesturePhase,
+    swipe_tracking: bool,
 ) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
@@ -3488,7 +3495,7 @@ pub fn gestureCallback(
             .mods = mods.binding(),
         }),
 
-        .swipe => self.swipeGesture(direction, fingers, mods, phase),
+        .swipe => self.swipeGesture(direction, fingers, mods, phase, swipe_tracking),
     }
 
     // The touch sequence ended; a claimed sequence drains through its
@@ -3601,6 +3608,7 @@ fn swipeGesture(
     fingers: u8,
     mods: input.Mods,
     phase: input.Binding.GesturePhase,
+    swipe_tracking: bool,
 ) void {
     // Swipes are discrete: the bound action fires once, at the moment the
     // recognizer commits the direction (the began phase). Later phases only
@@ -3641,6 +3649,20 @@ fn swipeGesture(
     if (fingers == 2 and !value.flags.force and !modified) {
         if (direction == .up or direction == .down) {
             log.debug("swipe skipped: vertical two-finger motion is scroll", .{});
+            return;
+        }
+
+        // The system swipe preference outranks the default bindings the same
+        // way the program does: with it off, the user declared system-wide
+        // that two-finger horizontal motion is scroll, so decline to claim
+        // it and the scroll copy (and momentum tail) reaches the program.
+        // No deferred indicator here, unlike mouse reporting below: that
+        // deferral is a surprising program-driven state, while this one is
+        // the user's own standing choice, and the recognizer commits a
+        // "swipe" on any fast horizontal flick - signaling every routine
+        // scroll would be noise.
+        if (!swipe_tracking) {
+            log.debug("swipe skipped: system swipe preference off", .{});
             return;
         }
 

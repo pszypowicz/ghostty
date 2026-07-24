@@ -14,8 +14,8 @@
 //!     per discrete step, which is useful when binding a continuous gesture
 //!     to a discrete action.
 //!   * `force:` fires the binding even when gesture arbitration would defer
-//!     to the running program (e.g. a two-finger swipe while the program
-//!     enabled mouse reporting).
+//!     the swipe (e.g. the program enabled mouse reporting, or the macOS
+//!     "Swipe between pages" setting excludes two-finger swiping).
 const Gesturebinds = @This();
 
 const std = @import("std");
@@ -60,8 +60,8 @@ pub const Flags = struct {
     once: bool = false,
 
     /// Fire the binding even when gesture arbitration would normally defer
-    /// to the running program (see Surface gesture arbitration). Set via the
-    /// `force:` prefix on the action.
+    /// the gesture (see Surface gesture arbitration). Set via the `force:`
+    /// prefix on the action.
     force: bool = false,
 };
 

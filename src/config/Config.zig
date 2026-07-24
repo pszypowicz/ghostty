@@ -1969,7 +1969,10 @@ keybind: Keybinds = .{},
 /// arbitrated in favor of the running program: a two-finger swipe binding
 /// does not fire while the program has enabled mouse reporting (e.g. tmux
 /// with `mouse on`), and vertical two-finger swipes do not fire at all since
-/// vertical scroll always has a consumer. Two kinds of binding skip this
+/// vertical scroll always has a consumer. The macOS trackpad setting "Swipe
+/// between pages" is honored the same way: unless the selected mode includes
+/// two-finger swiping, an unmodified two-finger swipe binding does not fire
+/// and the motion scrolls the program instead. Two kinds of binding skip this
 /// arbitration and always fire: modified triggers (e.g.
 /// `cmd+swipe-left:2`), since a modified motion cannot collide with
 /// anyone's scrolling and is unambiguous intent aimed at the terminal, and

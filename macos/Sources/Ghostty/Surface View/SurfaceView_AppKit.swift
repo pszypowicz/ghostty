@@ -1133,13 +1133,17 @@ extension Ghostty {
                     phase: phase))
 
             case .swipe:
+                // The swipe preference is read per event: it has no change
+                // notification, and reading it live makes a System Settings
+                // change apply to the very next gesture.
                 surfaceModel.sendGesture(.init(
                     kind: .swipe,
                     direction: .init(event.direction),
                     fingers: UInt8(clamping: event.fingerCount),
                     mods: mods,
                     amount: event.magnitude,
-                    phase: phase))
+                    phase: phase,
+                    swipeTracking: NSEvent.isSwipeTrackingFromScrollEventsEnabled))
             }
         }
 

@@ -562,6 +562,13 @@ extension Ghostty.Input {
         var amount: Double = 0
         var phase: Phase
 
+        /// The platform user preference for treating two-finger scroll
+        /// motion as navigation swipes (macOS "Swipe between pages").
+        /// Only swipe arbitration in the core consults it: when false,
+        /// unmodified non-forced two-finger swipe bindings defer so the
+        /// motion reaches the program as scrolling.
+        var swipeTracking: Bool = true
+
         /// `ghostty_input_gesture_e` - The family of gesture.
         enum Kind {
             case pinch
