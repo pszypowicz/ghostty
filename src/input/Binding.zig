@@ -333,6 +333,26 @@ pub const Action = union(enum) {
     /// the error will currently only show up in logs.
     text: []const u8,
 
+    /// Run a tmux command against the tmux session attached to this
+    /// terminal, if any.
+    ///
+    /// The tmux client attached to this terminal's tty is located by
+    /// scanning the tmux server sockets under `$TMUX_TMPDIR` (or `/tmp`)
+    /// and matching this terminal's tty against each server's clients.
+    /// If no client is attached, this action does nothing; combined with
+    /// `performable:` the key is not consumed in that case.
+    ///
+    /// The value is a tmux command with arguments, e.g.
+    /// `tmux_command:next-window` or `tmux_command:select-window -l`.
+    /// Arguments are split with shell-like quoting but without any
+    /// variable expansion or globbing. Unless the command already
+    /// specifies a `-t` target, the matched session is appended as
+    /// `-t <session>` so the command acts on the session visible in
+    /// this terminal.
+    ///
+    /// Only supported on macOS and Linux.
+    tmux_command: []const u8,
+
     /// Send data to the pty depending on whether cursor key mode is enabled
     /// (`application`) or disabled (`normal`).
     cursor_key: CursorKey,
@@ -1370,6 +1390,7 @@ pub const Action = union(enum) {
             .csi,
             .esc,
             .text,
+            .tmux_command,
             .cursor_key,
             .search,
             .navigate_search,
@@ -3434,6 +3455,12 @@ test "parse: action with string" {
         const binding = try parseSingle("a=set_tab_title:tab");
         try testing.expect(binding.action == .set_tab_title);
         try testing.expectEqualStrings("tab", binding.action.set_tab_title);
+    }
+    // multi-word parameter is preserved verbatim
+    {
+        const binding = try parseSingle("a=tmux_command:select-window -l");
+        try testing.expect(binding.action == .tmux_command);
+        try testing.expectEqualStrings("select-window -l", binding.action.tmux_command);
     }
 }
 
