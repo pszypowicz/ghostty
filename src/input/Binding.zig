@@ -343,11 +343,29 @@ pub const Action = union(enum) {
     ///
     /// The value is a tmux command with arguments, e.g.
     /// `tmux_command:next-window` or `tmux_command:select-window -l`.
-    /// Arguments are split with shell-like quoting but without any
-    /// variable expansion or globbing. Unless the command already
-    /// specifies a `-t` target, the matched session is appended as
-    /// `-t <session>` so the command acts on the session visible in
-    /// this terminal.
+    /// Arguments are split with sh-like quoting: single quotes keep
+    /// their span verbatim, double quotes allow `\"` and `\\` escapes,
+    /// and there is no variable expansion or globbing. tmux parses
+    /// command strings the same way, so nested commands quote exactly
+    /// as they would in `tmux.conf`.
+    ///
+    /// Two placeholders are replaced before the command runs:
+    /// `%session%` becomes the matched session and `%client%` becomes
+    /// this terminal's tty. Use them wherever a target has to sit in
+    /// a specific position: commands nested inside an `if-shell` do
+    /// not inherit an outer `-t`, and commit templates such as
+    /// choose-tree's need `-c %client%` because a command issued over
+    /// the server socket carries no client context. tmux's own `%%`
+    /// template notation is left untouched:
+    ///
+    /// ```ini
+    /// keybind = cmd+u=tmux_command:if -t %session% -F '#{==:#{pane_mode},tree-mode}' 'send-keys -t %session% Down' 'next-window -t %session%'
+    /// ```
+    ///
+    /// If the command uses a placeholder or already specifies a `-t`
+    /// target it runs as written; otherwise the matched session is
+    /// appended as `-t <session>` so the command acts on the session
+    /// visible in this terminal.
     ///
     /// Only supported on macOS and Linux.
     tmux_command: []const u8,

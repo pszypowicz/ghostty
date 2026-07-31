@@ -16,10 +16,14 @@ const log = std.log.scoped(.@"os-tmux");
 /// and false if no tmux client is attached to the tty, tmux is not
 /// installed, or the command failed.
 ///
-/// The tmux command is tokenized with shell-like quoting but without
-/// any expansion. Unless the command already carries a `-t` target,
-/// the matched session id is appended as `-t <session>` so the command
-/// acts on the session visible in this terminal.
+/// The tmux command is tokenized with sh-like quoting but without any
+/// expansion. Every `%session%` in the command is replaced with the
+/// matched session id and every `%client%` with the tty name, while
+/// tmux's own `%%` template notation passes through untouched. If a
+/// placeholder was replaced or the command already carries a `-t`
+/// target it runs as written; otherwise the session id is appended as
+/// `-t <session>` so the command acts on the session visible in this
+/// terminal.
 ///
 /// The allocator should be an arena: this function makes no attempt to
 /// free intermediate allocations.
@@ -67,7 +71,7 @@ fn sessionCommandPosix(
         if (entry.kind != .unix_domain_socket) continue;
         const sock = try std.fs.path.join(alloc, &.{ dir_path, entry.name });
         const session = (try attachedSession(alloc, tmux_path, sock, tty_name)) orelse continue;
-        return try runCommand(alloc, tmux_path, sock, args, session);
+        return try runCommand(alloc, tmux_path, sock, args, session, tty_name);
     }
 
     return false;
@@ -151,15 +155,11 @@ fn runCommand(
     sock: []const u8,
     args: []const []const u8,
     session: []const u8,
+    client: []const u8,
 ) !bool {
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.appendSlice(alloc, &.{ tmux_path, "-S", sock });
-    try argv.appendSlice(alloc, args);
-
-    // Target the matched session unless the command carries its own
-    // target. Without an explicit -t the server would pick the most
-    // recently used session, which is not necessarily ours.
-    if (!hasTargetFlag(args)) try argv.appendSlice(alloc, &.{ "-t", session });
+    try argv.appendSlice(alloc, try buildCommandArgs(alloc, args, session, client));
 
     const run = std.process.Child.run(.{
         .allocator = alloc,
@@ -176,6 +176,47 @@ fn runCommand(
     return true;
 }
 
+/// Build the command portion of the argv: the configured tokens with
+/// every `%session%` replaced by the session id and every `%client%`
+/// by the client tty, plus a trailing `-t <session>` when the command
+/// does not target one itself. Without a target the server would act
+/// on its most recently used session, which is not necessarily ours.
+///
+/// Appending is not always enough. tmux rejects flags that follow
+/// positional arguments, commands nested inside `if-shell` or
+/// `command-prompt` do not inherit the outer `-t`, and commit
+/// templates such as choose-tree's run against the client that sent
+/// the key, which for a socket-issued command is not the attached
+/// terminal. The placeholders put the session and client wherever the
+/// command needs them, and using one (like an explicit `-t`) disables
+/// the automatic append. tmux's own `%%` template notation is left
+/// untouched so templates can pass through unchanged.
+fn buildCommandArgs(
+    alloc: Allocator,
+    args: []const []const u8,
+    session: []const u8,
+    client: []const u8,
+) ![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var substituted = false;
+    for (args) |arg| {
+        var replaced = arg;
+        if (std.mem.indexOf(u8, replaced, "%session%") != null) {
+            substituted = true;
+            replaced = try std.mem.replaceOwned(u8, alloc, replaced, "%session%", session);
+        }
+        if (std.mem.indexOf(u8, replaced, "%client%") != null) {
+            substituted = true;
+            replaced = try std.mem.replaceOwned(u8, alloc, replaced, "%client%", client);
+        }
+        try out.append(alloc, replaced);
+    }
+    if (!substituted and !hasTargetFlag(args)) {
+        try out.appendSlice(alloc, &.{ "-t", session });
+    }
+    return out.items;
+}
+
 fn hasTargetFlag(args: []const []const u8) bool {
     for (args) |arg| {
         if (std.mem.startsWith(u8, arg, "-t")) return true;
@@ -183,14 +224,68 @@ fn hasTargetFlag(args: []const []const u8) bool {
     return false;
 }
 
-/// Split the configured command into argv tokens. ArgIteratorGeneral
-/// gives best-effort shell-like quoting; there is no variable
-/// expansion or globbing. The returned slices share the iterator's
-/// buffer, which the arena owns.
+/// Split the configured command into argv tokens with sh-like rules:
+/// unquoted whitespace separates tokens, single quotes preserve their
+/// span verbatim, double quotes allow `\"` and `\\` escapes, a
+/// backslash outside quotes escapes the next character, and adjacent
+/// quoted and unquoted spans join into one token. There is no
+/// variable expansion or globbing. tmux parses command strings the
+/// same way, so nested commands (if-shell branches, choose-tree
+/// templates) quote identically here and in tmux.conf. An unclosed
+/// quote runs to the end of the command.
 fn splitArgs(alloc: Allocator, command: []const u8) ![]const []const u8 {
     var out: std.ArrayListUnmanaged([]const u8) = .empty;
-    var it = try std.process.ArgIteratorGeneral(.{}).init(alloc, command);
-    while (it.next()) |arg| try out.append(alloc, arg);
+    var token: std.ArrayListUnmanaged(u8) = .empty;
+    var has_token = false;
+    var i: usize = 0;
+    while (i < command.len) : (i += 1) {
+        const c = command[i];
+        switch (c) {
+            ' ', '\t', '\n', '\r' => {
+                if (has_token) {
+                    try out.append(alloc, token.items);
+                    token = .empty;
+                    has_token = false;
+                }
+            },
+            '\'' => {
+                has_token = true;
+                i += 1;
+                const start = i;
+                while (i < command.len and command[i] != '\'') i += 1;
+                try token.appendSlice(alloc, command[start..i]);
+            },
+            '"' => {
+                has_token = true;
+                i += 1;
+                while (i < command.len and command[i] != '"') : (i += 1) {
+                    var ch = command[i];
+                    if (ch == '\\' and i + 1 < command.len) {
+                        const next = command[i + 1];
+                        if (next == '"' or next == '\\') {
+                            ch = next;
+                            i += 1;
+                        }
+                    }
+                    try token.append(alloc, ch);
+                }
+            },
+            '\\' => {
+                has_token = true;
+                if (i + 1 < command.len) {
+                    i += 1;
+                    try token.append(alloc, command[i]);
+                } else {
+                    try token.append(alloc, c);
+                }
+            },
+            else => {
+                has_token = true;
+                try token.append(alloc, c);
+            },
+        }
+    }
+    if (has_token) try out.append(alloc, token.items);
     return out.items;
 }
 
@@ -248,6 +343,50 @@ test "tmux: splitArgs handles quoting" {
         const args = try splitArgs(alloc, "  ");
         try testing.expectEqual(@as(usize, 0), args.len);
     }
+    {
+        const args = try splitArgs(
+            alloc,
+            "if -F '#{==:#{pane_mode},tree-mode}' 'send-keys Down' next-window",
+        );
+        try testing.expectEqual(@as(usize, 5), args.len);
+        try testing.expectEqualStrings("#{==:#{pane_mode},tree-mode}", args[2]);
+        try testing.expectEqualStrings("send-keys Down", args[3]);
+        try testing.expectEqualStrings("next-window", args[4]);
+    }
+    {
+        // Escaped quotes inside a double-quoted span.
+        const args = try splitArgs(alloc, "display-message \"a \\\"quoted\\\" word\"");
+        try testing.expectEqual(@as(usize, 2), args.len);
+        try testing.expectEqualStrings("a \"quoted\" word", args[1]);
+    }
+    {
+        // Adjacent quoted and unquoted spans join into one token.
+        const args = try splitArgs(alloc, "se'nd-k'eys C-\\\\");
+        try testing.expectEqual(@as(usize, 2), args.len);
+        try testing.expectEqualStrings("send-keys", args[0]);
+        try testing.expectEqualStrings("C-\\", args[1]);
+    }
+}
+
+test "tmux: splitArgs keeps a choose-tree template token intact" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // A single-quoted if-shell branch carries a double-quoted commit
+    // template; the template's `\"%%\"` must reach tmux verbatim.
+    const args = try splitArgs(
+        alloc,
+        \\if -t %session% -F '#{==:#{pane_mode},tree-mode}' 'send-keys -t %session% Enter' 'choose-tree -Zs -t %session% "switch-client -c %client% -t \"%%\""'
+        ,
+    );
+    try testing.expectEqual(@as(usize, 7), args.len);
+    try testing.expectEqualStrings(
+        \\choose-tree -Zs -t %session% "switch-client -c %client% -t \"%%\""
+    ,
+        args[6],
+    );
 }
 
 test "tmux: hasTargetFlag" {
@@ -255,4 +394,97 @@ test "tmux: hasTargetFlag" {
     try testing.expect(hasTargetFlag(&.{ "select-window", "-t", "main" }));
     try testing.expect(hasTargetFlag(&.{ "select-window", "-tmain" }));
     try testing.expect(!hasTargetFlag(&.{"next-window"}));
+}
+
+fn expectArgs(expected: []const []const u8, actual: []const []const u8) !void {
+    const testing = std.testing;
+    try testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |e, a| try testing.expectEqualStrings(e, a);
+}
+
+test "tmux: buildCommandArgs substitutes placeholders and skips the append" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const args = try splitArgs(
+        alloc,
+        \\if -t %session% -F '#{==:#{pane_mode},tree-mode}' 'send-keys -t %session% Down' 'next-window -t %session%'
+        ,
+    );
+    try expectArgs(&.{
+        "if",
+        "-t",
+        "$3",
+        "-F",
+        "#{==:#{pane_mode},tree-mode}",
+        "send-keys -t $3 Down",
+        "next-window -t $3",
+    }, try buildCommandArgs(alloc, args, "$3", "/dev/ttys004"));
+}
+
+test "tmux: buildCommandArgs substitutes %client% and keeps tmux %% intact" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const args = try splitArgs(
+        alloc,
+        \\choose-tree -Zs -t %session% 'switch-client -c %client% -t "%%"'
+        ,
+    );
+    try expectArgs(&.{
+        "choose-tree",
+        "-Zs",
+        "-t",
+        "$3",
+        \\switch-client -c /dev/ttys004 -t "%%"
+        ,
+    }, try buildCommandArgs(alloc, args, "$3", "/dev/ttys004"));
+}
+
+test "tmux: buildCommandArgs substitutes placeholders inside a larger token" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try expectArgs(
+        &.{ "switch-client", "-t$0" },
+        try buildCommandArgs(alloc, &.{ "switch-client", "-t%session%" }, "$0", "/dev/ttys001"),
+    );
+    try expectArgs(
+        &.{ "run-shell", "echo client=/dev/ttys001" },
+        try buildCommandArgs(alloc, &.{ "run-shell", "echo client=%client%" }, "$0", "/dev/ttys001"),
+    );
+}
+
+test "tmux: buildCommandArgs appends the target for a plain command" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try expectArgs(
+        &.{ "next-window", "-t", "$1" },
+        try buildCommandArgs(alloc, &.{"next-window"}, "$1", "/dev/ttys001"),
+    );
+
+    // Bare %% is tmux template notation, not a placeholder: it is left
+    // untouched and does not count as a substitution.
+    try expectArgs(
+        &.{ "display-message", "50%% done", "-t", "$1" },
+        try buildCommandArgs(alloc, &.{ "display-message", "50%% done" }, "$1", "/dev/ttys001"),
+    );
+}
+
+test "tmux: buildCommandArgs keeps an explicit -t untouched" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try expectArgs(
+        &.{ "select-window", "-t", "main" },
+        try buildCommandArgs(alloc, &.{ "select-window", "-t", "main" }, "$1", "/dev/ttys001"),
+    );
 }
