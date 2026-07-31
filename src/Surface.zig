@@ -3528,10 +3528,12 @@ fn pinchGesture(
 
             // Commit-and-lock: a recognized pinch owns its touch sequence,
             // so any scroll events the OS derives from the same fingers are
-            // dropped while the pinch is bound to an action.
+            // dropped while the pinch is bound to an action or will be
+            // reported in-band (DEC 2035).
             const bmods = mods.binding();
             if (self.config.gesture.get(.{ .gesture = .@"pinch-in", .mods = bmods }) != null or
-                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null)
+                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null or
+                (bmods.empty() and self.gestureReporting()))
             {
                 self.app.gesture_scroll_claim = .active;
             }
@@ -3542,6 +3544,9 @@ fn pinchGesture(
             // so a non-positive value can never spin this loop forever.
             const step = @max(0.001, self.config.gesture_pinch_step);
             const bmods = mods.binding();
+            // One mode read per changed event, not per step: the report
+            // decision cannot flip mid-loop in any way that matters.
+            const reporting = bmods.empty() and self.gestureReporting();
             self.gesture.pinch_accumulator += amount;
             while (@abs(self.gesture.pinch_accumulator) >= step) {
                 // Consume one step, keeping the remainder so that a fast pinch
@@ -3558,15 +3563,28 @@ fn pinchGesture(
                 const value = self.config.gesture.get(.{
                     .gesture = g,
                     .mods = bmods,
-                }) orelse continue;
+                });
+
+                // In-band gesture reporting: unmodified pinch steps go
+                // to the application unless the direction is force-bound.
+                if (reporting and (value == null or !value.?.flags.force)) {
+                    self.gestureReport(.{
+                        .gesture = g,
+                        .fingers = 2,
+                        .mag = if (out) 1 else -1,
+                    });
+                    continue;
+                }
+
+                const v = value orelse continue;
 
                 // A `once`-flagged action only fires a single time per gesture.
-                if (value.flags.once and self.gesture.pinch_once_fired) continue;
-                _ = self.performBindingAction(value.action) catch |err| {
+                if (v.flags.once and self.gesture.pinch_once_fired) continue;
+                _ = self.performBindingAction(v.action) catch |err| {
                     log.warn("error performing gesture action err={}", .{err});
                     continue;
                 };
-                if (value.flags.once) self.gesture.pinch_once_fired = true;
+                if (v.flags.once) self.gesture.pinch_once_fired = true;
             }
         },
 
@@ -3577,11 +3595,27 @@ fn pinchGesture(
     }
 }
 
-/// Perform the action bound to a discrete gesture, if any. Used by one-shot
-/// gestures that have no accumulator (e.g. smart-magnify).
+/// Perform the action bound to a discrete gesture, if any, or report it
+/// in-band when gesture reporting mode (DEC 2035) is set. Used by
+/// one-shot gestures that have no accumulator (e.g. smart-magnify).
 fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger) void {
-    const value = self.config.gesture.get(trigger) orelse return;
-    _ = self.performBindingAction(value.action) catch |err| {
+    const value = self.config.gesture.get(trigger);
+
+    // Unmodified discrete gestures report to an opted-in application;
+    // force: bindings and modified triggers stay terminal-side.
+    if (trigger.mods.empty() and
+        (value == null or !value.?.flags.force) and
+        self.gestureReporting())
+    {
+        self.gestureReport(.{
+            .gesture = trigger.gesture,
+            .fingers = trigger.fingers,
+        });
+        return;
+    }
+
+    const v = value orelse return;
+    _ = self.performBindingAction(v.action) catch |err| {
         log.warn("error performing gesture action err={}", .{err});
     };
 }
@@ -3634,11 +3668,39 @@ fn swipeGesture(
     const bmods = mods.binding();
     const modified = !bmods.empty();
 
-    const value = self.config.gesture.get(.{
+    const maybe_value = self.config.gesture.get(.{
         .gesture = gesture,
         .fingers = fingers,
         .mods = bmods,
-    }) orelse {
+    });
+
+    // In-band gesture reporting (DEC 2035): when the application
+    // enabled the mode, unmodified swipes are encoded to the pty
+    // instead of dispatching a binding - including unbound ones, since
+    // the application decides what a gesture means. Local handling
+    // still wins for modified triggers and force: bindings. Scroll
+    // keeps the axes it owns: vertical two-finger motion and the
+    // system swipe preference are respected before reporting. But
+    // reporting outranks the mouse-reporting deferral below, because
+    // the reporting application is the one consuming the events.
+    if (!modified and
+        (maybe_value == null or !maybe_value.?.flags.force))
+    report: {
+        if (fingers == 2) {
+            if (direction == .up or direction == .down) break :report;
+            if (!swipe_tracking) break :report;
+        }
+        if (!self.gestureReporting()) break :report;
+
+        self.gestureReport(.{ .gesture = gesture, .fingers = fingers });
+        // The report consumes the touch sequence exactly like a bound
+        // action would; the scroll copy must not also reach the app.
+        self.app.gesture_scroll_claim = .active;
+        log.debug("swipe reported gesture={} fingers={}", .{ gesture, fingers });
+        return;
+    }
+
+    const value = maybe_value orelse {
         log.debug("swipe unbound gesture={} fingers={}", .{ gesture, fingers });
         return;
     };
@@ -4063,6 +4125,32 @@ fn mouseReport(
     } }, .locked);
 }
 
+/// Encode a discrete gesture event to the pty per gesture reporting
+/// mode (DEC 2035). The caller gates on gestureReporting(). When the
+/// event carries no cell, the last known pointer cell is used.
+fn gestureReport(self: *Surface, event: input.gesture_encode.Event) void {
+    var ev = event;
+    if (ev.cell == null) ev.cell = self.mouse.link_point;
+
+    var data: termio.Message.WriteReq.Small.Array = undefined;
+    var writer: std.Io.Writer = .fixed(&data);
+    input.gesture_encode.encode(&writer, ev) catch |err| switch (err) {
+        error.WriteFailed => {
+            // Gesture sequences are bounded well below the small array
+            // size; see the encoder's size test.
+            log.warn("failed to encode gesture event err={}", .{err});
+            return;
+        },
+    };
+    const written = writer.buffered();
+    if (written.len == 0) return;
+
+    self.queueIo(.{ .write_small = .{
+        .data = data,
+        .len = @intCast(written.len),
+    } }, .unlocked);
+}
+
 /// Returns true if the shift modifier is allowed to be captured by modifier
 /// events. It is up to the caller to still verify it is a situation in which
 /// shift capture makes sense (i.e. left button, mouse click, etc.)
@@ -4099,6 +4187,14 @@ pub fn mouseCaptured(self: *Surface) bool {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
     return self.io.terminal.flags.mouse_event != .none;
+}
+
+/// Returns true if the terminal has gesture reporting mode (DEC 2035)
+/// set. The renderer state mutex must not be held by the caller.
+pub fn gestureReporting(self: *Surface) bool {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    return self.io.terminal.modes.get(.gesture_report);
 }
 
 /// Called for mouse button press/release events. This will return true

@@ -296,6 +296,10 @@ const entries: []const ModeEntry = &.{
     .{ .name = "synchronized_output", .value = 2026 },
     .{ .name = "grapheme_cluster", .value = 2027 },
     .{ .name = "report_color_scheme", .value = 2031 },
+    // Gesture reporting: trackpad gestures are encoded to the pty
+    // instead of firing terminal-side gesture bindings. See
+    // PROTOCOL-GESTURES.md in the companion tmux fork.
+    .{ .name = "gesture_report", .value = 2035 },
     .{ .name = "in_band_size_reports", .value = 2048 },
 };
 
