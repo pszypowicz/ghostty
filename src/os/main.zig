@@ -30,6 +30,7 @@ pub const xdg = @import("xdg.zig");
 pub const windows = @import("windows.zig");
 pub const macos = @import("macos.zig");
 pub const shell = @import("shell.zig");
+pub const tmux = @import("tmux.zig");
 pub const uri = @import("uri.zig");
 
 // Functions and types
@@ -71,6 +72,7 @@ test {
     _ = file;
     _ = i18n;
     _ = path;
+    _ = tmux;
     _ = uri;
     _ = shell;
 
