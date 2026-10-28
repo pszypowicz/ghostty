@@ -4335,12 +4335,27 @@ fn mouseReport(
     } }, .locked);
 }
 
+/// The viewport cell under the pointer at `pos`, or null for a negative
+/// position, which the apprt uses to report that the pointer left the
+/// surface. Positions in the padding clamp to the grid.
+fn pointerCell(pos: apprt.CursorPos, size: rendererpkg.Size) ?terminal.point.Coordinate {
+    if (pos.x < 0 or pos.y < 0) return null;
+    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = pos.x, .y = pos.y } };
+    const grid = coord.convert(.grid, size).grid;
+    return .{ .x = grid.x, .y = grid.y };
+}
+
 /// Encode a discrete gesture event to the pty per gesture reporting
 /// mode (DEC 2035). The caller gates on gestureReporting(). When the
-/// event carries no cell, the last known pointer cell is used.
+/// event carries no cell, the current pointer cell is used.
 fn gestureReport(self: *Surface, event: input.gesture_encode.Event) void {
     var ev = event;
-    if (ev.cell == null) ev.cell = self.mouse.link_point;
+    if (ev.cell == null) {
+        // The live pointer position, as for wheel reports. The link
+        // hover cell is not kept current while mouse reporting is on.
+        const pos: ?apprt.CursorPos = self.rt_surface.getCursorPos() catch null;
+        if (pos) |p| ev.cell = pointerCell(p, self.size);
+    }
 
     var data: termio.Message.WriteReq.Small.Array = undefined;
     var writer: std.Io.Writer = .fixed(&data);
@@ -7329,4 +7344,36 @@ test "gesture scroll claim" {
             gestureScrollClaimStep(case.claim, case.mods, case.xoff, case.yoff),
         );
     }
+}
+
+test "pointerCell" {
+    const testing = std.testing;
+
+    // A 9x4 grid of 10x20 cells with 5px side and 10px top/bottom padding.
+    const size: rendererpkg.Size = .{
+        .screen = .{ .width = 100, .height = 100 },
+        .cell = .{ .width = 10, .height = 20 },
+        .padding = .{ .top = 10, .bottom = 10, .left = 5, .right = 5 },
+    };
+
+    // Negative positions mean the pointer is outside the surface.
+    try testing.expectEqual(null, pointerCell(.{ .x = -1, .y = -1 }, size));
+    try testing.expectEqual(null, pointerCell(.{ .x = -1, .y = 50 }, size));
+    try testing.expectEqual(null, pointerCell(.{ .x = 50, .y = -1 }, size));
+
+    // Inside the grid.
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 3, .y = 2 },
+        pointerCell(.{ .x = 37, .y = 55 }, size).?,
+    );
+
+    // Padding clamps to the nearest edge cell.
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 0, .y = 0 },
+        pointerCell(.{ .x = 0, .y = 0 }, size).?,
+    );
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 8, .y = 3 },
+        pointerCell(.{ .x = 98, .y = 95 }, size).?,
+    );
 }
