@@ -409,6 +409,11 @@ const entries: []const ModeEntry = &.{
     // one-time password instead of pasting the text.
     // See https://sw.kovidgoyal.net/kitty/clipboard/
     .{ .name = "kitty_paste_events", .value = 5522 },
+    // Gesture reporting: trackpad gestures are encoded to the pty
+    // instead of firing terminal-side gesture bindings. See
+    // PROTOCOL-GESTURES.md in the companion tmux fork.
+    // It sits last so every upstream mode keeps its snapshot bit position.
+    .{ .name = "gesture_report", .value = 2035 },
 };
 
 test {

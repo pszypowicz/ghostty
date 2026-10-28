@@ -207,7 +207,8 @@
 //! bit 40  report_visibility
 //! bit 41  in_band_size_reports
 //! bit 42  kitty_paste_events
-//! bits 43-63  reserved, zero
+//! bit 43  gesture_report
+//! bits 44-63  reserved, zero
 //! ```
 //!
 //! This is the packed field order of native `ModePacked`. Its layout is
@@ -471,7 +472,7 @@ pub const Header = struct {
         try writer.writeByte(@intCast(@backingInt(self.mouse_shape)));
         try writer.writeByte(@intFromBool(self.password_input));
 
-        // Runtime, saved, and reset mode sets. ModePacked occupies 43 bits;
+        // Runtime, saved, and reset mode sets. ModePacked occupies 44 bits;
         // its eight-byte wire slots zero-extend the native packed value.
         const mode_values = [_]terminal_modes.ModePacked{
             self.current_modes,
@@ -1218,7 +1219,7 @@ const test_header_fixture = test_fixture.parse(
 
 test "TERMINAL mode bit layout" {
     try std.testing.expectEqual(
-        @as(usize, 43),
+        @as(usize, 44),
         @bitSizeOf(terminal_modes.ModePacked),
     );
 
@@ -1227,8 +1228,8 @@ test "TERMINAL mode bit layout" {
     );
     first.disable_keyboard = true;
     try std.testing.expectEqual(
-        @as(u43, 1) << 0,
-        @as(u43, @bitCast(first)),
+        @as(u44, 1) << 0,
+        @as(u44, @bitCast(first)),
     );
 
     var visibility: terminal_modes.ModePacked = std.mem.zeroes(
@@ -1236,8 +1237,8 @@ test "TERMINAL mode bit layout" {
     );
     visibility.report_visibility = true;
     try std.testing.expectEqual(
-        @as(u43, 1) << 40,
-        @as(u43, @bitCast(visibility)),
+        @as(u44, 1) << 40,
+        @as(u44, @bitCast(visibility)),
     );
 
     var size_reports: terminal_modes.ModePacked = std.mem.zeroes(
@@ -1245,17 +1246,26 @@ test "TERMINAL mode bit layout" {
     );
     size_reports.in_band_size_reports = true;
     try std.testing.expectEqual(
-        @as(u43, 1) << 41,
-        @as(u43, @bitCast(size_reports)),
+        @as(u44, 1) << 41,
+        @as(u44, @bitCast(size_reports)),
     );
 
-    var last: terminal_modes.ModePacked = std.mem.zeroes(
+    var paste_events: terminal_modes.ModePacked = std.mem.zeroes(
         terminal_modes.ModePacked,
     );
-    last.kitty_paste_events = true;
+    paste_events.kitty_paste_events = true;
     try std.testing.expectEqual(
-        @as(u43, 1) << 42,
-        @as(u43, @bitCast(last)),
+        @as(u44, 1) << 42,
+        @as(u44, @bitCast(paste_events)),
+    );
+
+    var gesture: terminal_modes.ModePacked = std.mem.zeroes(
+        terminal_modes.ModePacked,
+    );
+    gesture.gesture_report = true;
+    try std.testing.expectEqual(
+        @as(u44, 1) << 43,
+        @as(u44, @bitCast(gesture)),
     );
 }
 
