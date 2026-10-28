@@ -28,6 +28,7 @@ extension Ghostty {
             "toggle_window_decorations",
             "prompt_window_title",
             "show_gtk_inspector",
+            "check_for_updates",
         ]
 
         init(cValue: ghostty_command_s) {
