@@ -19,6 +19,20 @@ extension Ghostty {
         // Maintain whether our window has focus (is key) or not
         @State private var windowFocus: Bool = true
 
+        // When non-nil, a configured trackpad gesture was just deferred to
+        // the running program and the transient feedback badge is showing.
+        @State private var gestureDeferredAt: Date?
+
+        // Scale of the deferred-gesture badge, bounced on every deferral so
+        // repeated swipes each get visible acknowledgment.
+        @State private var gestureBadgeScale: CGFloat = 1.0
+
+        // Override tip appended to the deferred-gesture badge, taught only
+        // on the badge's first appearance per app run and only when the
+        // user actually has a modified override binding configured.
+        @State private var gestureTip: String?
+        static var gestureOverrideTipShown = false
+
         // Observe SecureInput to detect when its enabled
         @ObservedObject private var secureInput = SecureInput.shared
 
@@ -97,6 +111,27 @@ extension Ghostty {
                 )
                 .zIndex(1)
 
+                // Transient feedback that a trackpad gesture was deferred to
+                // the running program: without it, a deliberately deferred
+                // gesture is indistinguishable from a broken one. Every
+                // deferral bounces the badge (the task re-runs per event and
+                // resets the linger), then it fades away.
+                if let deferredAt = gestureDeferredAt {
+                    GestureDeferredBadge(scale: gestureBadgeScale, tip: gestureTip)
+                        .transition(.opacity)
+                        .task(id: deferredAt) {
+                            gestureBadgeScale = 1.15
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.55)) {
+                                gestureBadgeScale = 1.0
+                            }
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.easeOut(duration: 0.6)) {
+                                gestureDeferredAt = nil
+                            }
+                        }
+                }
+
                 VStack(spacing: 0) {
                     // If we have a URL from hovering a link, we show that.
                     if let url = surfaceView.hoverUrl {
@@ -168,6 +203,33 @@ extension Ghostty {
                     dragHandle: ghostty.config.dragHandle,
                 )
             }
+            .onReceive(center.publisher(for: .ghosttyGestureDidDefer, object: surfaceView)) { notification in
+                // The tip is decided once per badge episode (not per event,
+                // so a burst can't flip it mid-display) and shown only the
+                // first time per app run.
+                if gestureDeferredAt == nil {
+                    gestureTip = nil
+                    if !Self.gestureOverrideTipShown,
+                       let raw = notification.userInfo?[
+                        SwiftUI.Notification.Name.GestureDeferredOverrideModsKey] as? UInt {
+                        let flags = NSEvent.ModifierFlags(rawValue: raw)
+                        gestureTip = "hold \(Self.modifierSymbols(flags)) to override"
+                        Self.gestureOverrideTipShown = true
+                    }
+                }
+                withAnimation(.easeIn(duration: 0.1)) {
+                    gestureDeferredAt = Date()
+                }
+            }
+        }
+
+        private static func modifierSymbols(_ flags: NSEvent.ModifierFlags) -> String {
+            var symbols = ""
+            if flags.contains(.control) { symbols += "⌃" }
+            if flags.contains(.option) { symbols += "⌥" }
+            if flags.contains(.shift) { symbols += "⇧" }
+            if flags.contains(.command) { symbols += "⌘" }
+            return symbols
         }
     }
 
@@ -970,6 +1032,43 @@ extension Ghostty {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Gesture Deferred Badge
+
+    /// Transient feedback that a configured trackpad gesture was deferred
+    /// to the running program because it owns the motion (mouse reporting).
+    /// Positioned at the bottom center; bounced on repeated deferrals.
+    struct GestureDeferredBadge: View {
+        /// Bounce scale, applied to the capsule so it pops in place.
+        var scale: CGFloat = 1.0
+
+        /// Optional override teaching, e.g. "hold ⌘ to override". Shown on
+        /// the badge's first appearance per app run.
+        var tip: String?
+
+        var body: some View {
+            VStack {
+                Spacer()
+                HStack(spacing: 5) {
+                    Image(systemName: "computermouse.fill")
+                        .font(.system(size: 12))
+                    Text(tip.map { "Gesture sent to app · \($0)" } ?? "Gesture sent to app")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .foregroundStyle(.secondary)
+                .scaleEffect(scale)
+                // Sits one slot above KeyStateIndicator's bottom-center
+                // position so an active key table pill and this badge
+                // never overlap.
+                .padding(.bottom, 44)
+            }
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
         }
     }
 

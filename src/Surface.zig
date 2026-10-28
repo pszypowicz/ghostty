@@ -328,6 +328,7 @@ const DerivedConfig = struct {
     keybind: configpkg.Keybinds,
     gesture: configpkg.Gesturebinds,
     gesture_pinch_step: f64,
+    gesture_deferred_indicator: bool,
     mouse_scroll_passthrough_mod: configpkg.Config.ScrollPassthroughMod,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
@@ -412,6 +413,7 @@ const DerivedConfig = struct {
             .keybind = try config.keybind.clone(alloc),
             .gesture = try config.gesture.clone(alloc),
             .gesture_pinch_step = config.@"gesture-pinch-step",
+            .gesture_deferred_indicator = config.@"gesture-deferred-indicator",
             .mouse_scroll_passthrough_mod = config.@"mouse-scroll-passthrough-mod",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
@@ -3824,6 +3826,11 @@ fn swipeGesture(
         // way the program does: with it off, the user declared system-wide
         // that two-finger horizontal motion is scroll, so decline to claim
         // it and the scroll copy (and momentum tail) reaches the program.
+        // No deferred indicator here, unlike mouse reporting below: that
+        // deferral is a surprising program-driven state, while this one is
+        // the user's own standing choice, and the recognizer commits a
+        // "swipe" on any fast horizontal flick - signaling every routine
+        // scroll would be noise.
         if (!swipe_tracking) {
             log.debug("swipe skipped: system swipe preference off", .{});
             return;
@@ -3836,6 +3843,28 @@ fn swipeGesture(
         };
         if (mouse_reporting) {
             log.debug("swipe skipped: mouse reporting active", .{});
+            // A deferred gesture is indistinguishable from a broken one
+            // without feedback at exactly this moment. If the user has a
+            // modified variant of this trigger configured, the apprt can
+            // also teach the override, since modified triggers bypass
+            // arbitration.
+            if (self.config.gesture_deferred_indicator) {
+                const override_mods: input.Mods = self.config.gesture.overrideMods(.{
+                    .gesture = gesture,
+                    .fingers = fingers,
+                    .mods = mods.binding(),
+                }, scrollPassthroughMask(self.config.mouse_scroll_passthrough_mod)) orelse .{};
+                _ = self.rt_app.performAction(
+                    .{ .surface = self },
+                    .gesture_deferred,
+                    .{ .override_mods = @intCast(@as(
+                        input.Mods.Backing,
+                        @bitCast(override_mods),
+                    )) },
+                ) catch |err| {
+                    log.warn("apprt failed to report deferred gesture err={}", .{err});
+                };
+            }
             return;
         }
     }

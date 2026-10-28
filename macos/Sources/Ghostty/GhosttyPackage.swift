@@ -317,6 +317,16 @@ extension Notification.Name {
     /// Ring the bell
     static let ghosttyBellDidRing = Notification.Name("com.mitchellh.ghostty.ghosttyBellDidRing")
 
+    /// A configured trackpad gesture was deferred to the running program
+    /// (mouse reporting owns the motion). Object is the surface view.
+    /// UserInfo may contain GestureDeferredOverrideModsKey.
+    static let ghosttyGestureDidDefer = Notification.Name("com.mitchellh.ghostty.gestureDidDefer")
+
+    /// UserInfo key for ghosttyGestureDidDefer: NSEvent.ModifierFlags
+    /// rawValue (UInt) of a configured override variant of the deferred
+    /// trigger. Absent when no override is configured.
+    static let GestureDeferredOverrideModsKey = "com.mitchellh.ghostty.gestureDeferredOverrideMods"
+
     /// The active selection changed
     static let ghosttySelectionDidChange = Notification.Name("com.mitchellh.ghostty.ghosttySelectionDidChange")
 
