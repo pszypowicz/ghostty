@@ -3690,10 +3690,12 @@ fn pinchGesture(
 
             // Commit-and-lock: a recognized pinch owns its touch sequence,
             // so any scroll events the OS derives from the same fingers are
-            // dropped while the pinch is bound to an action.
+            // dropped while the pinch is bound to an action or will be
+            // reported in-band (DEC 2035).
             const bmods = mods.binding();
             if (self.config.gesture.get(.{ .gesture = .@"pinch-in", .mods = bmods }) != null or
-                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null)
+                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null or
+                (bmods.empty() and self.gestureReporting()))
             {
                 self.app.gesture_scroll_claim = .active;
             }
@@ -3704,6 +3706,9 @@ fn pinchGesture(
             // so a non-positive value can never spin this loop forever.
             const step = @max(0.001, self.config.gesture_pinch_step);
             const bmods = mods.binding();
+            // One mode read per changed event, not per step: the report
+            // decision cannot flip mid-loop in any way that matters.
+            const reporting = bmods.empty() and self.gestureReporting();
             self.gesture.pinch_accumulator += amount;
             while (@abs(self.gesture.pinch_accumulator) >= step) {
                 // Consume one step, keeping the remainder so that a fast pinch
@@ -3720,15 +3725,28 @@ fn pinchGesture(
                 const value = self.config.gesture.get(.{
                     .gesture = g,
                     .mods = bmods,
-                }) orelse continue;
+                });
+
+                // In-band gesture reporting: unmodified pinch steps go
+                // to the application unless the direction is force-bound.
+                if (reporting and (value == null or !value.?.flags.force)) {
+                    self.gestureReport(.{
+                        .gesture = g,
+                        .fingers = 2,
+                        .mag = if (out) 1 else -1,
+                    });
+                    continue;
+                }
+
+                const v = value orelse continue;
 
                 // A `once`-flagged action only fires a single time per gesture.
-                if (value.flags.once and self.gesture.pinch_once_fired) continue;
-                _ = self.performBindingAction(value.action) catch |err| {
+                if (v.flags.once and self.gesture.pinch_once_fired) continue;
+                _ = self.performBindingAction(v.action) catch |err| {
                     log.warn("error performing gesture action err={}", .{err});
                     continue;
                 };
-                if (value.flags.once) self.gesture.pinch_once_fired = true;
+                if (v.flags.once) self.gesture.pinch_once_fired = true;
             }
         },
 
@@ -3739,11 +3757,27 @@ fn pinchGesture(
     }
 }
 
-/// Perform the action bound to a discrete gesture, if any. Used by one-shot
-/// gestures that have no accumulator (e.g. smart-magnify).
+/// Perform the action bound to a discrete gesture, if any, or report it
+/// in-band when gesture reporting mode (DEC 2035) is set. Used by
+/// one-shot gestures that have no accumulator (e.g. smart-magnify).
 fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger) void {
-    const value = self.config.gesture.get(trigger) orelse return;
-    _ = self.performBindingAction(value.action) catch |err| {
+    const value = self.config.gesture.get(trigger);
+
+    // Unmodified discrete gestures report to an opted-in application;
+    // force: bindings and modified triggers stay terminal-side.
+    if (trigger.mods.empty() and
+        (value == null or !value.?.flags.force) and
+        self.gestureReporting())
+    {
+        self.gestureReport(.{
+            .gesture = trigger.gesture,
+            .fingers = trigger.fingers,
+        });
+        return;
+    }
+
+    const v = value orelse return;
+    _ = self.performBindingAction(v.action) catch |err| {
         log.warn("error performing gesture action err={}", .{err});
     };
 }
@@ -3808,7 +3842,16 @@ fn swipeGesture(
         .modified = !bmods.empty(),
         .swipe_tracking = swipe_tracking,
         .mouse_reporting = self.mouseReportingActive(),
+        .gesture_reporting = self.gestureReporting(),
     })) {
+        .report => {
+            self.gestureReport(.{ .gesture = gesture, .fingers = fingers });
+            // The report consumes the touch sequence exactly like a bound
+            // action would; the scroll copy must not also reach the app.
+            self.app.gesture_scroll_claim = .active;
+            log.debug("swipe reported gesture={} fingers={}", .{ gesture, fingers });
+        },
+
         .unbound => log.debug("swipe unbound gesture={} fingers={}", .{ gesture, fingers }),
 
         .skip_vertical_scroll => log.debug("swipe skipped: vertical two-finger motion is scroll", .{}),
@@ -3862,6 +3905,9 @@ fn swipeGesture(
 
 /// What a swipe that began does.
 const SwipeArbitration = enum {
+    /// Gesture reporting mode (DEC 2035) sends the swipe to the
+    /// application.
+    report,
     /// No gesture binding matches the swipe.
     unbound,
     /// Vertical two-finger motion stays scroll.
@@ -3889,13 +3935,38 @@ const SwipeArbitration = enum {
         swipe_tracking: bool,
         /// The program has mouse reporting active.
         mouse_reporting: bool,
+        /// The program has gesture reporting mode (DEC 2035) set.
+        gesture_reporting: bool,
     };
 };
 
-/// Decide what a swipe that began does. Two-finger swipes share their motion
-/// with scrolling, so unless the binding has `force:` they fire only when
-/// nothing else owns that motion.
+/// Decide what a swipe that began does. With gesture reporting mode
+/// (DEC 2035) set, an unmodified swipe goes to the application, bound or
+/// not, unless its binding has `force:` or it is two-finger motion that
+/// stays scroll. Two-finger swipes share their motion with scrolling, so
+/// unless the binding has `force:` they fire only when nothing else owns
+/// that motion.
 fn swipeArbitration(facts: SwipeArbitration.Facts) SwipeArbitration {
+    // In-band gesture reporting (DEC 2035): when the application
+    // enabled the mode, unmodified swipes are reported instead of
+    // dispatching a binding - including unbound ones, since the
+    // application decides what a gesture means. Local handling still
+    // wins for modified triggers and force: bindings. Scroll keeps the
+    // axes it owns: vertical two-finger motion and the system swipe
+    // preference are respected before reporting. But reporting outranks
+    // the mouse-reporting deferral below, because the reporting
+    // application is the one consuming the events.
+    if (facts.gesture_reporting and
+        !facts.modified and
+        (!facts.bound or !facts.force))
+    report: {
+        if (facts.fingers == 2) {
+            if (facts.vertical) break :report;
+            if (!facts.swipe_tracking) break :report;
+        }
+        return .report;
+    }
+
     if (!facts.bound) return .unbound;
 
     // Three or more fingers never produce scroll events, so there is
@@ -4318,6 +4389,47 @@ fn mouseReport(
     } }, .locked);
 }
 
+/// The viewport cell under the pointer at `pos`, or null for a negative
+/// position, which the apprt uses to report that the pointer left the
+/// surface. Positions in the padding clamp to the grid.
+fn pointerCell(pos: apprt.CursorPos, size: rendererpkg.Size) ?terminal.point.Coordinate {
+    if (pos.x < 0 or pos.y < 0) return null;
+    const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = pos.x, .y = pos.y } };
+    const grid = coord.convert(.grid, size).grid;
+    return .{ .x = grid.x, .y = grid.y };
+}
+
+/// Encode a discrete gesture event to the pty per gesture reporting
+/// mode (DEC 2035). The caller gates on gestureReporting(). When the
+/// event carries no cell, the current pointer cell is used.
+fn gestureReport(self: *Surface, event: input.gesture_encode.Event) void {
+    var ev = event;
+    if (ev.cell == null) {
+        // The live pointer position, as for wheel reports. The link
+        // hover cell is not kept current while mouse reporting is on.
+        const pos: ?apprt.CursorPos = self.rt_surface.getCursorPos() catch null;
+        if (pos) |p| ev.cell = pointerCell(p, self.size);
+    }
+
+    var data: termio.Message.WriteReq.Small.Array = undefined;
+    var writer: std.Io.Writer = .fixed(&data);
+    input.gesture_encode.encode(&writer, ev) catch |err| switch (err) {
+        error.WriteFailed => {
+            // Gesture sequences are bounded well below the small array
+            // size; see the encoder's size test.
+            log.warn("failed to encode gesture event err={}", .{err});
+            return;
+        },
+    };
+    const written = writer.buffered();
+    if (written.len == 0) return;
+
+    self.queueIo(.{ .write_small = .{
+        .data = data,
+        .len = @intCast(written.len),
+    } }, .unlocked);
+}
+
 /// Returns true if the shift modifier is allowed to be captured by modifier
 /// events. It is up to the caller to still verify it is a situation in which
 /// shift capture makes sense (i.e. left button, mouse click, etc.)
@@ -4354,6 +4466,14 @@ pub fn mouseCaptured(self: *Surface) bool {
     self.renderer_state.mutex.lockUncancelable(global.io());
     defer self.renderer_state.mutex.unlock(global.io());
     return self.io.terminal.flags.mouse_event != .none;
+}
+
+/// Returns true if the terminal has gesture reporting mode (DEC 2035)
+/// set. The renderer state mutex must not be held by the caller.
+pub fn gestureReporting(self: *Surface) bool {
+    self.renderer_state.mutex.lockUncancelable(global.io());
+    defer self.renderer_state.mutex.unlock(global.io());
+    return self.io.terminal.modes.get(.gesture_report);
 }
 
 /// Called for mouse button press/release events. This will return true
@@ -7290,6 +7410,7 @@ test "swipe arbitration: outcome per rule" {
         modified: bool = false,
         swipe_tracking: bool = true,
         mouse_reporting: bool = false,
+        gesture_reporting: bool = false,
         expected: SwipeArbitration,
     };
     const cases = [_]Case{
@@ -7304,13 +7425,14 @@ test "swipe arbitration: outcome per rule" {
         // An unowned horizontal two-finger swipe fires.
         .{ .expected = .fire },
 
-        // Three or more fingers never scroll, so they always fire.
+        // Three or more fingers never scroll, so no two-finger rule stops
+        // them from firing.
         .{ .fingers = 3, .mouse_reporting = true, .expected = .fire },
         .{ .fingers = 4, .mouse_reporting = true, .expected = .fire },
         .{ .fingers = 3, .vertical = true, .expected = .fire },
         .{ .fingers = 4, .vertical = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .fire },
 
-        // Vertical two-finger motion is scroll, ahead of the swipe preference and mouse reporting.
+        // Vertical two-finger motion is scroll, ahead of the swipe preference, gesture reporting, and mouse reporting.
         .{ .vertical = true, .expected = .skip_vertical_scroll },
         .{ .vertical = true, .swipe_tracking = false, .expected = .skip_vertical_scroll },
         .{ .vertical = true, .mouse_reporting = true, .expected = .skip_vertical_scroll },
@@ -7334,6 +7456,38 @@ test "swipe arbitration: outcome per rule" {
         .{ .force = true, .swipe_tracking = false, .expected = .fire },
         .{ .force = true, .mouse_reporting = true, .expected = .fire },
         .{ .force = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .fire },
+
+        // Gesture reporting (DEC 2035) sends unmodified swipes to the
+        // application, bound or not.
+        .{ .gesture_reporting = true, .bound = false, .expected = .report },
+        .{ .gesture_reporting = true, .expected = .report },
+        .{ .gesture_reporting = true, .fingers = 3, .expected = .report },
+        .{ .gesture_reporting = true, .fingers = 3, .bound = false, .expected = .report },
+        .{ .gesture_reporting = true, .fingers = 4, .vertical = true, .swipe_tracking = false, .expected = .report },
+
+        // Reporting outranks the mouse-reporting deferral.
+        .{ .gesture_reporting = true, .mouse_reporting = true, .expected = .report },
+        .{ .gesture_reporting = true, .mouse_reporting = true, .bound = false, .expected = .report },
+
+        // Modified triggers and `force:` bindings stay terminal-side.
+        .{ .gesture_reporting = true, .modified = true, .expected = .fire },
+        .{ .gesture_reporting = true, .modified = true, .mouse_reporting = true, .expected = .fire },
+        .{ .gesture_reporting = true, .modified = true, .bound = false, .expected = .unbound },
+        .{ .gesture_reporting = true, .fingers = 3, .modified = true, .expected = .fire },
+        .{ .gesture_reporting = true, .force = true, .expected = .fire },
+        .{ .gesture_reporting = true, .force = true, .vertical = true, .expected = .fire },
+        .{ .gesture_reporting = true, .force = true, .mouse_reporting = true, .expected = .fire },
+        .{ .gesture_reporting = true, .fingers = 3, .force = true, .expected = .fire },
+
+        // Two-finger motion that stays scroll (vertical, or with the swipe
+        // preference off) is not reported and gets the outcome it has
+        // without reporting.
+        .{ .gesture_reporting = true, .vertical = true, .expected = .skip_vertical_scroll },
+        .{ .gesture_reporting = true, .vertical = true, .mouse_reporting = true, .expected = .skip_vertical_scroll },
+        .{ .gesture_reporting = true, .vertical = true, .bound = false, .expected = .unbound },
+        .{ .gesture_reporting = true, .swipe_tracking = false, .expected = .skip_swipe_preference },
+        .{ .gesture_reporting = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .skip_swipe_preference },
+        .{ .gesture_reporting = true, .swipe_tracking = false, .bound = false, .expected = .unbound },
     };
     for (cases, 0..) |case, i| {
         errdefer std.debug.print("swipe arbitration case {d} failed\n", .{i});
@@ -7345,6 +7499,39 @@ test "swipe arbitration: outcome per rule" {
             .modified = case.modified,
             .swipe_tracking = case.swipe_tracking,
             .mouse_reporting = case.mouse_reporting,
+            .gesture_reporting = case.gesture_reporting,
         }));
     }
+}
+
+test "pointerCell" {
+    const testing = std.testing;
+
+    // A 9x4 grid of 10x20 cells with 5px side and 10px top/bottom padding.
+    const size: rendererpkg.Size = .{
+        .screen = .{ .width = 100, .height = 100 },
+        .cell = .{ .width = 10, .height = 20 },
+        .padding = .{ .top = 10, .bottom = 10, .left = 5, .right = 5 },
+    };
+
+    // Negative positions mean the pointer is outside the surface.
+    try testing.expectEqual(null, pointerCell(.{ .x = -1, .y = -1 }, size));
+    try testing.expectEqual(null, pointerCell(.{ .x = -1, .y = 50 }, size));
+    try testing.expectEqual(null, pointerCell(.{ .x = 50, .y = -1 }, size));
+
+    // Inside the grid.
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 3, .y = 2 },
+        pointerCell(.{ .x = 37, .y = 55 }, size).?,
+    );
+
+    // Padding clamps to the nearest edge cell.
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 0, .y = 0 },
+        pointerCell(.{ .x = 0, .y = 0 }, size).?,
+    );
+    try testing.expectEqual(
+        terminal.point.Coordinate{ .x = 8, .y = 3 },
+        pointerCell(.{ .x = 98, .y = 95 }, size).?,
+    );
 }

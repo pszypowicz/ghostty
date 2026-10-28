@@ -2040,6 +2040,19 @@ keybind: Keybinds = .{},
 /// `gesture =` alone resets all gesture bindings to the defaults, and
 /// `gesture = clear` removes all gesture bindings.
 ///
+/// An application can take over gestures entirely by enabling gesture
+/// reporting mode (DEC private mode 2035, `CSI ? 2035 h`). While the
+/// mode is set, unmodified gestures are encoded to the application as
+/// escape sequences instead of firing these bindings - including
+/// gestures with no binding at all, since the application decides what
+/// each gesture means. Modified triggers and `force:` bindings stay
+/// terminal-side, the `mouse-scroll-passthrough-mod` still always
+/// scrolls, and scroll keeps the axes it owns (vertical two-finger
+/// motion, and horizontal when the system swipe preference is off).
+/// Gesture reporting takes precedence over the mouse-reporting
+/// deferral described above. The wire format is documented in
+/// PROTOCOL-GESTURES.md of the companion tmux fork.
+///
 /// Trackpad gestures are currently only supported on macOS.
 gesture: Gesturebinds = .{},
 
