@@ -1,3 +1,99 @@
+# About this fork
+
+This is my personal build of [Ghostty](https://github.com/ghostty-org/ghostty)
+with trackpad gesture support on macOS. Terminals normally use the trackpad
+only for scrolling, and I wanted pinches, smart zoom, and multi-finger swipes
+to work as regular terminal input, so this fork adds a gesture engine and a
+protocol that lets terminal applications receive gestures themselves. I would
+like this work to land in upstream Ghostty so the fork stops being necessary,
+and until then I rebase it on top of every official release.
+
+## What it adds
+
+- **Bindable trackpad gestures.** The `gesture` config key binds a gesture to
+  any keybind action, with the syntax
+  `gesture = [mods+]<gesture>[:<fingers>] = [flags:]<action>`. Recognized
+  gestures are `pinch-in`, `pinch-out`, `smart-magnify` (two-finger double
+  tap), and directional swipes with two, three, or four fingers. The defaults
+  bind pinch to font size, smart magnify to a temporary font zoom toggle, and
+  two-finger horizontal swipes to tab switching.
+
+  ```ini
+  gesture = cmd+swipe-left:2 = goto_split:left
+  gesture = swipe-up:3 = toggle_quick_terminal
+  gesture = pinch-in = once:text:\x02s
+  ```
+
+- **Scroll arbitration.** Two-finger swipes share their motion with scrolling,
+  so unmodified swipe bindings defer to programs that enabled mouse reporting
+  and honor the macOS "Swipe between pages" preference. Modified triggers and
+  `force:` bindings always fire.
+- **Gesture reporting mode (DEC private mode 2035).** An application can
+  enable `CSI ? 2035 h` and receive gestures as escape sequences instead of
+  the terminal handling them. The wire format is specified in
+  [PROTOCOL-GESTURES.md](https://github.com/pszypowicz/tmux/blob/feat/gestures/PROTOCOL-GESTURES.md)
+  in the companion tmux fork.
+- **No auto-update mechanism.** The Sparkle auto-update stack is removed from
+  the app. Updates ship through my Homebrew tap instead, so `brew upgrade` is
+  the whole update story.
+
+## The companion tmux fork
+
+I also daily drive a [tmux fork](https://github.com/pszypowicz/tmux) (branch
+`feat/gestures`) that decodes gesture reporting mode into bindable keys such
+as `Swipe2Left`, `PinchIn`, and `SmartMagnify`, so gestures can drive tmux
+windows, panes, and tree mode directly. I proposed the protocol to upstream
+tmux in [tmux/tmux#5462](https://github.com/tmux/tmux/issues/5462); the
+maintainer found the idea and the code reasonable on a first look, but wants
+to see the protocol supported in more terminals before tmux adopts it.
+
+## Branches
+
+| Branch                | Content                                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `main`                | The upstream release commit the fork is based on (the commit tagged v1.4.0), untouched.                             |
+| `feat/gestures`       | Gesture recognition and config bindings. [Draft PR #5](https://github.com/pszypowicz/ghostty/pull/5) describes it.  |
+| `feat/gesture-report` | Gesture reporting mode (DEC 2035), stacked on `feat/gestures`.                                                      |
+| `personal`            | `feat/gesture-report` plus the Sparkle removal and this README. This is what I ship and the branch you are reading. |
+
+Gesture recognition itself lives in
+[TrackpadKit](https://github.com/pszypowicz/TrackpadKit), an MIT-licensed
+Swift package with a raw-NSTouch recognizer, palm rejection, and
+fixture-replay tests. The fork consumes it through SPM, and it is reusable by
+any macOS app that wants gesture input.
+
+## Installing with Homebrew
+
+```sh
+brew install --cask pszypowicz/tap/ghostty-personal
+brew install pszypowicz/tap/tmux-gestures
+```
+
+The cask is Developer ID signed and notarized, and it conflicts with the
+official Ghostty casks because both install `Ghostty.app`. The formula
+conflicts with core `tmux` for the same reason.
+
+## Upstream status
+
+Trackpad gestures are not an accepted Ghostty feature yet, and upstream asks
+that pull requests be associated with previously accepted issues, so the work
+lives here for now. If you want this upstream, these are the places to say so:
+
+- [ghostty-org/ghostty discussion #3506](https://github.com/ghostty-org/ghostty/discussions/3506),
+  the long-standing trackpad gestures request
+- [ghostty-org/ghostty discussion #13442](https://github.com/ghostty-org/ghostty/discussions/13442),
+  my feature announcement for this implementation
+- [ghostty-org/ghostty discussion #13446](https://github.com/ghostty-org/ghostty/discussions/13446),
+  my vouch request
+- [tmux/tmux#5462](https://github.com/tmux/tmux/issues/5462), the protocol RFC
+  on the tmux side
+
+Problems with the fork builds belong in
+[this repo's issues](https://github.com/pszypowicz/ghostty/issues), not in the
+upstream tracker. The upstream README follows below.
+
+---
+
 <!-- LOGO -->
 <h1>
 <p align="center">
