@@ -226,6 +226,28 @@ pub fn get(self: Gesturebinds, trigger: Trigger) ?Value {
     return self.map.get(trigger);
 }
 
+/// Find a configured modified variant of the given trigger: a binding for
+/// the same gesture and finger count whose trigger requires modifier keys.
+/// Modified triggers bypass gesture arbitration, so when an unmodified
+/// binding is deferred to the running program this tells the apprt what
+/// override it can teach the user. Variants that require any modifier in
+/// `exclude` are skipped because they can never fire. Returns the
+/// variant's mods, or null.
+pub fn overrideMods(self: Gesturebinds, trigger: Trigger, exclude: Mods) ?Mods {
+    const excluded: Mods.Backing = @bitCast(exclude);
+    var it = self.map.iterator();
+    while (it.next()) |entry| {
+        const t = entry.key_ptr.*;
+        if (t.gesture != trigger.gesture) continue;
+        if (t.fingers != trigger.fingers) continue;
+        const bits: Mods.Backing = @bitCast(t.mods);
+        if (bits == 0) continue;
+        if (bits & excluded != 0) continue;
+        return t.mods;
+    }
+    return null;
+}
+
 /// Deep copy of the struct. Required by Config.
 pub fn clone(self: *const Gesturebinds, alloc: Allocator) Allocator.Error!Gesturebinds {
     var map: Map = .{};
@@ -540,6 +562,53 @@ test "formatEntry: empty renders empty field" {
     var g: Gesturebinds = .{};
     try g.formatEntry(formatterpkg.entryFormatter("gesture", &buf.writer));
     try testing.expectEqualStrings("gesture = \n", buf.written());
+}
+
+test "overrideMods: finds a modified variant of the same trigger" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var g: Gesturebinds = .{};
+    try g.parseCLI(alloc, "swipe-left:2=next_tab");
+    const plain: Trigger = .{ .gesture = .@"swipe-left", .fingers = 2 };
+    try testing.expect(g.overrideMods(plain, .{}) == null);
+
+    try g.parseCLI(alloc, "cmd+swipe-left:2=next_tab");
+    const mods = g.overrideMods(plain, .{}).?;
+    try testing.expect(mods.super);
+
+    // Different finger count or gesture doesn't match.
+    try testing.expect(g.overrideMods(.{ .gesture = .@"swipe-left", .fingers = 3 }, .{}) == null);
+    try testing.expect(g.overrideMods(.{ .gesture = .@"swipe-right", .fingers = 2 }, .{}) == null);
+}
+
+test "overrideMods: skips variants that need an excluded modifier" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var g: Gesturebinds = .{};
+    try g.parseCLI(alloc, "swipe-left:2=next_tab");
+    try g.parseCLI(alloc, "shift+swipe-left:2=next_tab");
+    const plain: Trigger = .{ .gesture = .@"swipe-left", .fingers = 2 };
+
+    // The only modified variant needs shift, which the caller excludes
+    // (the scroll passthrough modifier never reaches the gesture engine).
+    try testing.expect(g.overrideMods(plain, .{ .shift = true }) == null);
+    // Without the exclusion the shift variant is offered.
+    try testing.expect(g.overrideMods(plain, .{}).?.shift);
+
+    // A variant that needs the excluded modifier among others is skipped
+    // too, and offered with all of its mods when nothing is excluded.
+    var multi: Gesturebinds = .{};
+    try multi.parseCLI(alloc, "swipe-left:2=next_tab");
+    try multi.parseCLI(alloc, "shift+super+swipe-left:2=next_tab");
+    try testing.expect(multi.overrideMods(plain, .{ .shift = true }) == null);
+    const mods = multi.overrideMods(plain, .{}).?;
+    try testing.expect(mods.shift and mods.super);
 }
 
 test "parseCLI: smart-magnify discrete gesture" {
