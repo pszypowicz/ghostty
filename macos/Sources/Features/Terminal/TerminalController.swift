@@ -1618,7 +1618,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     @objc private func onGotoTab(notification: SwiftUI.Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        guard target == self.focusedSurface else { return }
+        // Containment, not focus: trackpad gestures dispatch from the surface
+        // under the pointer, which is not necessarily the focused surface
+        // (an unfocused split, or focus still settling immediately after a
+        // gesture-driven tab switch). Any surface in this window is a valid
+        // source for tab navigation.
+        guard surfaceTree.contains(target) else { return }
         guard let window = self.window else { return }
 
         // Get the tab index from the notification

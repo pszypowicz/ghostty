@@ -46,6 +46,16 @@ focused: bool = true,
 /// you must always call hasSurface to validate it.
 focused_surface: ?*Surface = null,
 
+/// Trackpad gesture scroll-claim state. When a gesture binding consumes a
+/// touch sequence, live scroll events from the same motion are dropped and
+/// the claim drains through the inertial momentum tail. This is app state
+/// rather than surface state because a trackpad is one physical device per
+/// app: when the gesture's own action changes window topology (e.g. a
+/// swipe that switches tabs), the sequence's remaining scroll events and
+/// its momentum tail are delivered to the newly revealed surface, and the
+/// claim must follow the physical sequence, not the surface.
+gesture_scroll_claim: enum { none, active, momentum } = .none,
+
 /// The mailbox that can be used to send this thread messages. Note
 /// this is a blocking queue so if it is full you will get errors (or block).
 mailbox: Mailbox.Queue,

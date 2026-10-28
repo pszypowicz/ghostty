@@ -518,8 +518,9 @@ extension Ghostty.Input.MouseButton: AppEnum {
 extension Ghostty.Input {
     /// `ghostty_input_scroll_mods_t` - Scroll event modifiers
     ///
-    /// This is a packed bitmask that contains precision and momentum information
-    /// for scroll events, matching the Zig `ScrollMods` packed struct.
+    /// This is a packed bitmask that contains precision, momentum, and
+    /// held-key-modifier information for scroll events, matching the Zig
+    /// `ScrollMods` packed struct.
     struct ScrollMods {
         let rawValue: Int32
 
@@ -534,12 +535,24 @@ extension Ghostty.Input {
             return Momentum(rawValue: UInt8(momentumBits)) ?? .none
         }
 
-        init(precision: Bool = false, momentum: Momentum = .none) {
+        /// The bindable keyboard modifiers held during the event, as
+        /// ghostty_input_mods_e bits. The core uses these to arbitrate
+        /// modified trackpad motion against gesture bindings.
+        var keys: Int32 {
+            (rawValue >> 4) & 0b0000_1111
+        }
+
+        init(
+            precision: Bool = false,
+            momentum: Momentum = .none,
+            keys: ghostty_input_mods_e = GHOSTTY_MODS_NONE
+        ) {
             var value: Int32 = 0
             if precision {
                 value |= 0b0000_0001
             }
             value |= Int32(momentum.rawValue) << 1
+            value |= Int32(keys.rawValue & 0b0000_1111) << 4
             self.rawValue = value
         }
 
@@ -607,6 +620,79 @@ extension Ghostty.Input.Momentum {
         case .cancelled: self = .cancelled
         case .mayBegin: self = .mayBegin
         default: self = .none
+        }
+    }
+}
+
+// MARK: Ghostty.Input.GestureEvent
+
+extension Ghostty.Input {
+    /// A trackpad/touchpad gesture event (e.g. pinch, swipe).
+    struct GestureEvent {
+        var kind: Kind
+        var direction: Direction = .none
+        var fingers: UInt8 = 0
+        var mods: Mods = []
+        var amount: Double = 0
+        var phase: Phase
+
+        /// The platform user preference for treating two-finger scroll
+        /// motion as navigation swipes (macOS "Swipe between pages").
+        /// Only swipe arbitration in the core consults it: when false,
+        /// unmodified non-forced two-finger swipe bindings defer so the
+        /// motion reaches the program as scrolling.
+        var swipeTracking: Bool = true
+
+        /// `ghostty_input_gesture_e` - The family of gesture.
+        enum Kind {
+            case pinch
+            case smartMagnify
+            case swipe
+
+            var cGesture: ghostty_input_gesture_e {
+                switch self {
+                case .pinch: GHOSTTY_GESTURE_PINCH
+                case .smartMagnify: GHOSTTY_GESTURE_SMART_MAGNIFY
+                case .swipe: GHOSTTY_GESTURE_SWIPE
+                }
+            }
+        }
+
+        /// `ghostty_input_gesture_direction_e` - The direction of a
+        /// directional gesture (swipe).
+        enum Direction {
+            case none
+            case left
+            case right
+            case up
+            case down
+
+            var cDirection: ghostty_input_gesture_direction_e {
+                switch self {
+                case .none: GHOSTTY_GESTURE_DIRECTION_NONE
+                case .left: GHOSTTY_GESTURE_DIRECTION_LEFT
+                case .right: GHOSTTY_GESTURE_DIRECTION_RIGHT
+                case .up: GHOSTTY_GESTURE_DIRECTION_UP
+                case .down: GHOSTTY_GESTURE_DIRECTION_DOWN
+                }
+            }
+        }
+
+        /// `ghostty_input_gesture_phase_e` - The phase of a continuous gesture.
+        enum Phase {
+            case began
+            case changed
+            case ended
+            case cancelled
+
+            var cPhase: ghostty_input_gesture_phase_e {
+                switch self {
+                case .began: GHOSTTY_GESTURE_PHASE_BEGAN
+                case .changed: GHOSTTY_GESTURE_PHASE_CHANGED
+                case .ended: GHOSTTY_GESTURE_PHASE_ENDED
+                case .cancelled: GHOSTTY_GESTURE_PHASE_CANCELLED
+                }
+            }
         }
     }
 }
