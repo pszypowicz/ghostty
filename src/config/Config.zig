@@ -1974,8 +1974,7 @@ keybind: Keybinds = .{},
 ///   * `pinch-in` - Trackpad pinch closed (zoom out).
 ///   * `pinch-out` - Trackpad pinch open (zoom in).
 ///   * `smart-magnify` - Two-finger double-tap (macOS "smart zoom"). A discrete,
-///     one-shot gesture, so the `once:` prefix is unnecessary. Unbound by
-///     default.
+///     one-shot gesture, so the `once:` prefix is unnecessary.
 ///   * `swipe-left`, `swipe-right`, `swipe-up`, `swipe-down` - Directional
 ///     multi-finger swipes. The optional `:<fingers>` suffix selects the
 ///     finger count (2, 3, or 4) and defaults to 2, e.g. `swipe-left:4`.
@@ -1985,9 +1984,14 @@ keybind: Keybinds = .{},
 /// those modifiers are held.
 ///
 /// Default bindings: pinch is bound to font size (`pinch-out` increases,
-/// `pinch-in` decreases) and two-finger horizontal swipes switch tabs
-/// (`swipe-left:2` is next tab, `swipe-right:2` is previous tab), following
-/// the content metaphor used by Safari. The defaults are safe alongside
+/// `pinch-in` decreases), smart magnify toggles a temporary font zoom
+/// (`toggle_font_zoom:6`: tap to zoom in, tap again to return exactly to
+/// the pre-zoom size; pinch adjustments made while zoomed are kept, the
+/// second tap still restores the pre-zoom size), and two-finger horizontal
+/// swipes switch tabs (`swipe-left:2` is next tab, `swipe-right:2` is
+/// previous tab), following the content metaphor used by Safari. Smart
+/// magnify requires "Smart zoom" to be enabled in macOS System Settings
+/// (Trackpad, Scroll & Zoom). The defaults are safe alongside
 /// scrolling: they defer to programs that enabled mouse reporting (see the
 /// arbitration below), and horizontal two-finger motion has no consumer
 /// anywhere else. Note that macOS system gestures (Mission Control, Spaces)
