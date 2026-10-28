@@ -71,6 +71,16 @@ pub fn init(
             xc_config,
         });
 
+        // The project's SYMROOT is the relative path "build", which
+        // target-style builds resolve against every project directory
+        // separately - including read-only Swift package checkouts,
+        // where compiling a source package then fails with EACCES.
+        // Absolute paths keep all products and intermediates under
+        // macos/build where the app is expected.
+        const build_dir = b.path("macos/build");
+        step.addDirectoryArg2(build_dir, .{ .prefix = "SYMROOT=", .make_absolute = true });
+        step.addDirectoryArg2(build_dir, .{ .prefix = "OBJROOT=", .make_absolute = true });
+
         // If we have a specific architecture, we need to pass it
         // to xcodebuild.
         if (xc_arch) |arch| step.addArgs(&.{ "-arch", arch });
