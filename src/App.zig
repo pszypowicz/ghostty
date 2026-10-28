@@ -54,7 +54,7 @@ focused_surface: ?*Surface = null,
 /// swipe that switches tabs), the sequence's remaining scroll events and
 /// its momentum tail are delivered to the newly revealed surface, and the
 /// claim must follow the physical sequence, not the surface.
-gesture_scroll_claim: enum { none, active, momentum } = .none,
+gesture_scroll_claim: GestureScrollClaim = .none,
 
 /// The mailbox that can be used to send this thread messages. Note
 /// this is a blocking queue so if it is full you will get errors (or block).
@@ -82,6 +82,9 @@ config_conditional_state: configpkg.ConditionalState,
 /// never goes true again. This can be used by surfaces to determine
 /// if they are the first surface.
 first: bool = true,
+
+/// The state of `gesture_scroll_claim`.
+pub const GestureScrollClaim = enum { none, active, momentum };
 
 pub const CreateError = Allocator.Error || font.SharedGridSet.InitError;
 

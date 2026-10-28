@@ -3879,6 +3879,36 @@ fn swipeGesture(
     };
 }
 
+/// The gesture scroll claim after one scroll event, and whether that event
+/// belongs to the claimed motion and must be dropped.
+const GestureScrollClaimStep = struct {
+    claim: App.GestureScrollClaim,
+    drop: bool,
+};
+
+/// Advance the gesture scroll claim for one scroll event. The arbitration
+/// rules are described in scrollCallback.
+fn gestureScrollClaimStep(
+    claim: App.GestureScrollClaim,
+    mods: input.ScrollMods,
+    xoff: f64,
+    yoff: f64,
+) GestureScrollClaimStep {
+    switch (claim) {
+        .none => return .{ .claim = .none, .drop = false },
+        .active => return .{ .claim = .active, .drop = mods.precision },
+        .momentum => {
+            if (mods.momentum != .none) return .{ .claim = .momentum, .drop = true };
+            if (xoff == 0 and yoff == 0) return .{ .claim = .momentum, .drop = true };
+            // Only fresh precision motion ends the claim. A wheel tick
+            // can't be part of the claimed trackpad sequence, so it passes
+            // and the claim holds.
+            if (!mods.precision) return .{ .claim = .momentum, .drop = false };
+            return .{ .claim = .none, .drop = false };
+        },
+    }
+}
+
 /// Mouse scroll event. Negative is down, left. Positive is up, right.
 ///
 /// "Natural scrolling" is a macOS term for inverting the scroll direction.
@@ -3902,22 +3932,23 @@ pub fn scrollCallback(
     // be dropped. The copy is always precision (it comes from the trackpad),
     // so non-precision devices - a wheel mouse scrolling while the claimed
     // fingers are down - pass through untouched. After the fingers lift,
-    // the claim keeps swallowing the sequence's inertial momentum tail; the
-    // first fresh motion releases it. The lifted sequence's own trailing
-    // event (zero delta, no momentum flag yet) must not: its ordering
-    // relative to the gesture-ended callback is not guaranteed.
+    // the claim keeps swallowing the sequence's inertial momentum tail
+    // until fresh precision motion releases it. A wheel event passes
+    // without releasing the claim. The lifted sequence's own trailing
+    // event (zero delta, no momentum flag yet) is dropped without
+    // releasing the claim, because its ordering relative to the
+    // gesture-ended callback is not guaranteed.
     // The claim is app state because the claimed motion doesn't stay on one
     // surface: a fired tab switch re-routes the sequence's remaining scroll
     // and its momentum tail to the newly revealed surface.
-    switch (self.app.gesture_scroll_claim) {
-        .none => {},
-        .active => if (scroll_mods.precision) return,
-        .momentum => {
-            if (scroll_mods.momentum != .none) return;
-            if (xoff_raw == 0 and yoff == 0) return;
-            self.app.gesture_scroll_claim = .none;
-        },
-    }
+    const claim = gestureScrollClaimStep(
+        self.app.gesture_scroll_claim,
+        scroll_mods,
+        xoff_raw,
+        yoff,
+    );
+    self.app.gesture_scroll_claim = claim.claim;
+    if (claim.drop) return;
 
     // Precise motion held with a gesture modifier belongs to the gesture
     // layer from its very first frame: the modifier declared the motion is
@@ -7149,5 +7180,57 @@ test "promptClickRelativeRow" {
             pages.pointFromPin(.viewport, prompt) == null,
         );
         try testing.expectEqual(case.expected, promptClickRelativeRow(&pages, prompt, click));
+    }
+}
+
+test "gesture scroll claim" {
+    const testing = std.testing;
+    const wheel: input.ScrollMods = .{};
+    const wheel_inertia: input.ScrollMods = .{ .momentum = .changed };
+    const trackpad: input.ScrollMods = .{ .precision = true };
+    const inertia: input.ScrollMods = .{ .precision = true, .momentum = .changed };
+    const inertia_end: input.ScrollMods = .{ .precision = true, .momentum = .ended };
+    const Case = struct {
+        claim: App.GestureScrollClaim,
+        mods: input.ScrollMods,
+        xoff: f64 = 0,
+        yoff: f64 = 0,
+        expected: GestureScrollClaimStep,
+    };
+    const cases = [_]Case{
+        // No claim: every event passes.
+        .{ .claim = .none, .mods = wheel, .yoff = 1, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = trackpad, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = trackpad, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = inertia, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+
+        // Fingers down: precision events are the claimed motion, wheel
+        // events pass, and nothing changes the claim.
+        .{ .claim = .active, .mods = trackpad, .xoff = 4, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = trackpad, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = inertia, .yoff = 4, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = wheel, .yoff = 1, .expected = .{ .claim = .active, .drop = false } },
+        .{ .claim = .active, .mods = wheel, .expected = .{ .claim = .active, .drop = false } },
+
+        // Momentum tail: inertial and zero-delta events are dropped and
+        // keep the claim, and fresh precision motion releases it.
+        .{ .claim = .momentum, .mods = inertia, .yoff = 4, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = inertia_end, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = wheel_inertia, .yoff = 1, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = trackpad, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = wheel, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = trackpad, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .momentum, .mods = trackpad, .xoff = -4, .expected = .{ .claim = .none, .drop = false } },
+
+        // Momentum tail: a wheel tick passes and the claim holds.
+        .{ .claim = .momentum, .mods = wheel, .yoff = 1, .expected = .{ .claim = .momentum, .drop = false } },
+        .{ .claim = .momentum, .mods = wheel, .xoff = -1, .expected = .{ .claim = .momentum, .drop = false } },
+    };
+    for (cases, 0..) |case, i| {
+        errdefer std.debug.print("gesture scroll claim case {d} failed\n", .{i});
+        try testing.expectEqual(
+            case.expected,
+            gestureScrollClaimStep(case.claim, case.mods, case.xoff, case.yoff),
+        );
     }
 }
