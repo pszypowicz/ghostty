@@ -1693,6 +1693,81 @@ pub const Action = union(enum) {
     const bindingSetEqual = equal;
 };
 
+/// A trackpad/touchpad gesture that can be bound to an action via the
+/// `gesture` config option. These are the discrete, directional triggers the
+/// core derives from continuous platform gesture events.
+///
+/// This is intentionally kept separate from `Trigger` (which is keyboard- and
+/// C-ABI-facing) so gestures don't leak into key sequences, tables, or menus.
+pub const Gesture = enum {
+    @"pinch-in",
+    @"pinch-out",
+    /// Two-finger double-tap (macOS "smart zoom"). A discrete, one-shot
+    /// gesture with no direction or magnitude.
+    @"smart-magnify",
+
+    // Directional multi-finger swipes. The finger count is part of the
+    // gesture trigger (see Gesturebinds.Trigger), not this enum.
+    @"swipe-left",
+    @"swipe-right",
+    @"swipe-up",
+    @"swipe-down",
+};
+
+/// The family of gesture as delivered by an apprt. The specific directional
+/// `Gesture` trigger is derived by the core: for pinch from the sign of the
+/// reported amount, for swipe from the reported direction. Values must stay
+/// in sync with `ghostty_input_gesture_e` in include/ghostty.h.
+pub const GestureKind = enum(c_int) {
+    pinch,
+    smart_magnify,
+    swipe,
+};
+
+/// The direction of a directional gesture (swipe). Values must stay in sync
+/// with `ghostty_input_gesture_direction_e` in include/ghostty.h.
+pub const GestureDirection = enum(c_int) {
+    none,
+    left,
+    right,
+    up,
+    down,
+};
+
+/// The phase of a continuous gesture. Values must stay in sync with
+/// `ghostty_input_gesture_phase_e` in include/ghostty.h.
+pub const GesturePhase = enum(c_int) {
+    began,
+    changed,
+    ended,
+    cancelled,
+};
+
+/// Parse a single trigger part as a modifier name (including aliases),
+/// returning a Mods value with only that modifier set, or null if the part
+/// is not a modifier name. Shared by keybind and gesture trigger parsing so
+/// both use the same modifier grammar.
+pub fn parseModifierName(part: []const u8) ?key.Mods {
+    const modsInfo = @typeInfo(key.Mods).@"struct";
+    inline for (modsInfo.field_names, modsInfo.field_types) |name, T| {
+        if (T == bool) {
+            if (std.mem.eql(u8, part, name)) {
+                var mods: key.Mods = .{};
+                @field(mods, name) = true;
+                return mods;
+            }
+        }
+    }
+    inline for (key_mods.alias) |pair| {
+        if (std.mem.eql(u8, part, pair[0])) {
+            var mods: key.Mods = .{};
+            @field(mods, @tagName(pair[1])) = true;
+            return mods;
+        }
+    }
+    return null;
+}
+
 /// Trigger is the associated key state that can trigger an action.
 /// This is an extern struct because this is also used in the C API.
 ///
@@ -1752,28 +1827,14 @@ pub const Trigger = struct {
             const part = rem[0..idx];
             rem = if (idx >= rem.len) "" else rem[idx + 1 ..];
 
-            // Check if its a modifier
-            const modsInfo = @typeInfo(key.Mods).@"struct";
-            inline for (modsInfo.field_names, modsInfo.field_types) |field, field_type| {
-                if (field_type == bool) {
-                    if (std.mem.eql(u8, part, field)) {
-                        // Repeat not allowed
-                        if (@field(result.mods, field)) return Error.InvalidFormat;
-                        @field(result.mods, field) = true;
-                        continue :loop;
-                    }
-                }
-            }
-
-            // Alias modifiers
-            inline for (key_mods.alias) |pair| {
-                if (std.mem.eql(u8, part, pair[0])) {
-                    // Repeat not allowed
-                    const field = @tagName(pair[1]);
-                    if (@field(result.mods, field)) return Error.InvalidFormat;
-                    @field(result.mods, field) = true;
-                    continue :loop;
-                }
+            // Check if its a modifier (including aliases)
+            if (parseModifierName(part)) |m| {
+                // Repeat not allowed
+                const cur: key.Mods.Backing = @bitCast(result.mods);
+                const add: key.Mods.Backing = @bitCast(m);
+                if (cur & add != 0) return Error.InvalidFormat;
+                result.mods = @bitCast(cur | add);
+                continue :loop;
             }
 
             // Anything after this point is a key and we only support

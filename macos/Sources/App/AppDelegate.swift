@@ -154,6 +154,9 @@ class AppDelegate: NSObject,
         updateController.viewModel
     }
 
+    /// App-level trackpad gesture acquisition and routing.
+    private let trackpadEventMonitor = TrackpadEventMonitor()
+
     /// The elapsed time since the process was started
     var timeSinceLaunch: TimeInterval {
         return ProcessInfo.processInfo.systemUptime - applicationLaunchTime
@@ -217,6 +220,11 @@ class AppDelegate: NSObject,
             // Disable this so that repeated key events make it through to our terminal views.
             "ApplePressAndHoldEnabled": false,
         ])
+
+        // Trackpad gestures are acquired and recognized at the app level
+        // (see TrackpadEventMonitor) so one physical touch sequence maps to
+        // one gesture regardless of what its action does to window topology.
+        trackpadEventMonitor.start()
 
         // Store our start time
         applicationLaunchTime = ProcessInfo.processInfo.systemUptime

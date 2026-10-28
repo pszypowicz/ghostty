@@ -130,6 +130,18 @@ pressed_key: ?input.KeyEvent = null,
 /// for handled bindings.
 last_binding_trigger: u64 = 0,
 
+/// Trackpad gesture state. Continuous gestures (e.g. pinch) are accumulated
+/// here and converted into discrete steps that map to configured gesture
+/// bindings. See `gestureCallback`.
+gesture: struct {
+    /// Accumulated pinch magnification since the last discrete step.
+    pinch_accumulator: f64 = 0,
+
+    /// Whether a `once`-flagged action has already fired during the current
+    /// pinch gesture. Reset when a new gesture begins.
+    pinch_once_fired: bool = false,
+} = .{},
+
 /// The terminal IO handler.
 io: termio.Termio,
 io_thread: termio.Thread,
@@ -306,6 +318,9 @@ const DerivedConfig = struct {
     /// For docs for these, see the associated config they are derived from.
     original_font_size: f32,
     keybind: configpkg.Keybinds,
+    gesture: configpkg.Gesturebinds,
+    gesture_pinch_step: f64,
+    mouse_scroll_passthrough_mod: configpkg.Config.ScrollPassthroughMod,
     abnormal_command_exit_runtime_ms: u32,
     clipboard_read: configpkg.ClipboardAccess,
     clipboard_write: configpkg.ClipboardAccess,
@@ -387,6 +402,9 @@ const DerivedConfig = struct {
         return .{
             .original_font_size = config.@"font-size",
             .keybind = try config.keybind.clone(alloc),
+            .gesture = try config.gesture.clone(alloc),
+            .gesture_pinch_step = config.@"gesture-pinch-step",
+            .mouse_scroll_passthrough_mod = config.@"mouse-scroll-passthrough-mod",
             .abnormal_command_exit_runtime_ms = config.@"abnormal-command-exit-runtime",
             .clipboard_read = config.@"clipboard-read",
             .clipboard_write = config.@"clipboard-write",
@@ -3576,6 +3594,327 @@ const ScrollAmount = struct {
     }
 };
 
+/// Called for trackpad/touchpad gestures. Continuous gestures are accumulated
+/// into discrete steps here and dispatched to the configured `gesture`
+/// bindings, reusing the same action machinery as keybinds.
+///
+/// `swipe_tracking` is the platform user preference for treating two-finger
+/// scroll motion as navigation swipes (macOS "Swipe between pages"). The
+/// apprt reads it per event because the platform offers no change
+/// notification; only swipe arbitration consults it. Platforms without such
+/// a preference pass true.
+pub fn gestureCallback(
+    self: *Surface,
+    kind: input.Binding.GestureKind,
+    direction: input.Binding.GestureDirection,
+    fingers: u8,
+    mods: input.Mods,
+    amount: f64,
+    phase: input.Binding.GesturePhase,
+    swipe_tracking: bool,
+) !void {
+    // Crash metadata in case we crash in here
+    crash.sentry.thread_state = self.crashThreadState();
+    defer crash.sentry.thread_state = null;
+
+    // Always show the mouse again if it is hidden
+    if (self.mouse.hidden) self.showMouse();
+
+    // The changed stream is high-frequency; everything else is a decision
+    // point worth tracing when diagnosing gesture feel.
+    if (phase != .changed) log.debug(
+        "gesture event kind={} direction={} fingers={} phase={}",
+        .{ kind, direction, fingers, phase },
+    );
+
+    // The passthrough modifier addresses the terminal itself: the gesture
+    // engine stands down so the motion flows as plain scrolling. Ended and
+    // cancelled still pass for swipe and pinch so a committed gesture's
+    // claim can release; smart-magnify is discrete with no claim, so it is
+    // swallowed entirely - the passthrough modifier is never a gesture
+    // modifier.
+    if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, mods.binding())) {
+        if (phase == .began or phase == .changed) return;
+        if (kind == .smart_magnify) return;
+    }
+
+    // A new gesture beginning means any prior sequence is over. An active
+    // claim at this point is stale (its release event was lost), so clear it
+    // rather than letting it eat scroll forever.
+    if (phase == .began and self.app.gesture_scroll_claim == .active) {
+        self.app.gesture_scroll_claim = .none;
+    }
+
+    switch (kind) {
+        .pinch => self.pinchGesture(mods, amount, phase),
+
+        // Discrete, one-shot gesture: fire the bound action once when the
+        // gesture completes. A tap produces no scroll, so it never claims.
+        .smart_magnify => if (phase == .ended) self.performGestureBinding(.{
+            .gesture = .@"smart-magnify",
+            .mods = mods.binding(),
+        }),
+
+        .swipe => self.swipeGesture(direction, fingers, mods, phase, swipe_tracking),
+    }
+
+    // The touch sequence ended; a claimed sequence drains through its
+    // momentum tail before scroll resumes.
+    if (phase == .ended or phase == .cancelled) {
+        if (self.app.gesture_scroll_claim == .active) {
+            self.app.gesture_scroll_claim = .momentum;
+        }
+    }
+}
+
+fn pinchGesture(
+    self: *Surface,
+    mods: input.Mods,
+    amount: f64,
+    phase: input.Binding.GesturePhase,
+) void {
+    switch (phase) {
+        .began => {
+            self.gesture.pinch_accumulator = 0;
+            self.gesture.pinch_once_fired = false;
+
+            // Commit-and-lock: a recognized pinch owns its touch sequence,
+            // so any scroll events the OS derives from the same fingers are
+            // dropped while the pinch is bound to an action.
+            const bmods = mods.binding();
+            if (self.config.gesture.get(.{ .gesture = .@"pinch-in", .mods = bmods }) != null or
+                self.config.gesture.get(.{ .gesture = .@"pinch-out", .mods = bmods }) != null)
+            {
+                self.app.gesture_scroll_claim = .active;
+            }
+        },
+
+        .changed => {
+            // The step is clamped in config finalization, but guard here too
+            // so a non-positive value can never spin this loop forever.
+            const step = @max(0.001, self.config.gesture_pinch_step);
+            const bmods = mods.binding();
+            self.gesture.pinch_accumulator += amount;
+            while (@abs(self.gesture.pinch_accumulator) >= step) {
+                // Consume one step, keeping the remainder so that a fast pinch
+                // triggers multiple steps in a single event.
+                const out = self.gesture.pinch_accumulator > 0;
+                if (out) {
+                    self.gesture.pinch_accumulator -= step;
+                } else {
+                    self.gesture.pinch_accumulator += step;
+                }
+
+                const g: input.Binding.Gesture =
+                    if (out) .@"pinch-out" else .@"pinch-in";
+                const value = self.config.gesture.get(.{
+                    .gesture = g,
+                    .mods = bmods,
+                }) orelse continue;
+
+                // A `once`-flagged action only fires a single time per gesture.
+                if (value.flags.once and self.gesture.pinch_once_fired) continue;
+                _ = self.performBindingAction(value.action) catch |err| {
+                    log.warn("error performing gesture action err={}", .{err});
+                    continue;
+                };
+                if (value.flags.once) self.gesture.pinch_once_fired = true;
+            }
+        },
+
+        .ended, .cancelled => {
+            self.gesture.pinch_accumulator = 0;
+            self.gesture.pinch_once_fired = false;
+        },
+    }
+}
+
+/// Perform the action bound to a discrete gesture, if any. Used by one-shot
+/// gestures that have no accumulator (e.g. smart-magnify).
+fn performGestureBinding(self: *Surface, trigger: configpkg.Gesturebinds.Trigger) void {
+    const value = self.config.gesture.get(trigger) orelse return;
+    _ = self.performBindingAction(value.action) catch |err| {
+        log.warn("error performing gesture action err={}", .{err});
+    };
+}
+
+fn scrollPassthroughMask(mod: configpkg.Config.ScrollPassthroughMod) input.Mods {
+    return switch (mod) {
+        .none => .{},
+        .shift => .{ .shift = true },
+        .ctrl => .{ .ctrl = true },
+        .alt => .{ .alt = true },
+        .super => .{ .super = true },
+    };
+}
+
+fn scrollPassthroughHeld(
+    mod: configpkg.Config.ScrollPassthroughMod,
+    mods: input.Mods,
+) bool {
+    return mods.int() & scrollPassthroughMask(mod).int() != 0;
+}
+
+fn scrollPassthroughStrip(
+    mod: configpkg.Config.ScrollPassthroughMod,
+    mods: input.Mods,
+) input.Mods {
+    return mods.unset(scrollPassthroughMask(mod));
+}
+
+fn swipeGesture(
+    self: *Surface,
+    direction: input.Binding.GestureDirection,
+    fingers: u8,
+    mods: input.Mods,
+    phase: input.Binding.GesturePhase,
+    swipe_tracking: bool,
+) void {
+    // Swipes are discrete: the bound action fires once, at the moment the
+    // recognizer commits the direction (the began phase). Later phases only
+    // matter for claim lifetime, which gestureCallback handles.
+    if (phase != .began) return;
+
+    const gesture: input.Binding.Gesture = switch (direction) {
+        .left => .@"swipe-left",
+        .right => .@"swipe-right",
+        .up => .@"swipe-up",
+        .down => .@"swipe-down",
+        .none => return,
+    };
+
+    const bmods = mods.binding();
+    const value = self.config.gesture.get(.{
+        .gesture = gesture,
+        .fingers = fingers,
+        .mods = bmods,
+    });
+
+    switch (swipeArbitration(.{
+        .fingers = fingers,
+        .vertical = direction == .up or direction == .down,
+        .bound = value != null,
+        .force = if (value) |v| v.flags.force else false,
+        .modified = !bmods.empty(),
+        .swipe_tracking = swipe_tracking,
+        .mouse_reporting = self.mouseReportingActive(),
+    })) {
+        .unbound => log.debug("swipe unbound gesture={} fingers={}", .{ gesture, fingers }),
+
+        .skip_vertical_scroll => log.debug("swipe skipped: vertical two-finger motion is scroll", .{}),
+
+        .skip_swipe_preference => log.debug("swipe skipped: system swipe preference off", .{}),
+
+        .defer_to_program => log.debug("swipe skipped: mouse reporting active", .{}),
+
+        .fire => {
+            // The binding consumes the touch sequence: claim it so the
+            // scroll copy of the same motion (and its momentum tail) is
+            // dropped.
+            self.app.gesture_scroll_claim = .active;
+
+            log.debug("swipe fired gesture={} fingers={}", .{ gesture, fingers });
+            _ = self.performBindingAction(value.?.action) catch |err| {
+                log.warn("error performing gesture action err={}", .{err});
+            };
+        },
+    }
+}
+
+/// What a swipe that began does.
+const SwipeArbitration = enum {
+    /// No gesture binding matches the swipe.
+    unbound,
+    /// Vertical two-finger motion stays scroll.
+    skip_vertical_scroll,
+    /// The system swipe preference is off, so horizontal two-finger motion
+    /// stays scroll.
+    skip_swipe_preference,
+    /// The program has mouse reporting active and receives the motion.
+    defer_to_program,
+    /// The bound action fires.
+    fire,
+
+    /// The facts the outcome depends on.
+    const Facts = struct {
+        fingers: u8,
+        /// The swipe direction is up or down.
+        vertical: bool,
+        /// A gesture binding matches the swipe.
+        bound: bool,
+        /// The matching binding has the `force:` flag.
+        force: bool,
+        /// The trigger has binding modifiers held.
+        modified: bool,
+        /// The platform swipe preference, as passed to gestureCallback.
+        swipe_tracking: bool,
+        /// The program has mouse reporting active.
+        mouse_reporting: bool,
+    };
+};
+
+/// Decide what a swipe that began does. Two-finger swipes share their motion
+/// with scrolling, so unless the binding has `force:` they fire only when
+/// nothing else owns that motion.
+fn swipeArbitration(facts: SwipeArbitration.Facts) SwipeArbitration {
+    if (!facts.bound) return .unbound;
+
+    // Three or more fingers never produce scroll events, so there is
+    // nothing to arbitrate.
+    if (facts.fingers != 2) return .fire;
+
+    // Two escapes skip arbitration entirely: the `force:` flag, and a
+    // modified trigger. Modified motion cannot collide with anyone's
+    // scrolling, since plain scrolling never involves held modifiers.
+    if (facts.force or facts.modified) return .fire;
+
+    // The running program outranks the gesture by default: if it enabled
+    // mouse reporting it receives wheel events on both axes, and the
+    // vertical axis always has a consumer (scrollback or alternate scroll
+    // arrows) even when it didn't. Only a horizontal two-finger swipe in a
+    // surface without mouse reporting is unowned motion.
+    if (facts.vertical) return .skip_vertical_scroll;
+
+    // The system swipe preference outranks the default bindings the same
+    // way the program does: with it off, the user declared system-wide
+    // that two-finger horizontal motion is scroll, so decline to claim it
+    // and the scroll copy (and momentum tail) reaches the program.
+    if (!facts.swipe_tracking) return .skip_swipe_preference;
+
+    if (facts.mouse_reporting) return .defer_to_program;
+    return .fire;
+}
+
+/// The gesture scroll claim after one scroll event, and whether that event
+/// belongs to the claimed motion and must be dropped.
+const GestureScrollClaimStep = struct {
+    claim: App.GestureScrollClaim,
+    drop: bool,
+};
+
+/// Advance the gesture scroll claim for one scroll event. The arbitration
+/// rules are described in scrollCallback.
+fn gestureScrollClaimStep(
+    claim: App.GestureScrollClaim,
+    mods: input.ScrollMods,
+    xoff: f64,
+    yoff: f64,
+) GestureScrollClaimStep {
+    switch (claim) {
+        .none => return .{ .claim = .none, .drop = false },
+        .active => return .{ .claim = .active, .drop = mods.precision },
+        .momentum => {
+            if (mods.momentum != .none) return .{ .claim = .momentum, .drop = true };
+            if (xoff == 0 and yoff == 0) return .{ .claim = .momentum, .drop = true };
+            // Only fresh precision motion ends the claim. A wheel tick
+            // can't be part of the claimed trackpad sequence, so it passes
+            // and the claim holds.
+            if (!mods.precision) return .{ .claim = .momentum, .drop = false };
+            return .{ .claim = .none, .drop = false };
+        },
+    }
+}
+
 /// Mouse scroll event. Negative is down, left. Positive is up, right.
 ///
 /// "Natural scrolling" is a macOS term for inverting the scroll direction.
@@ -3583,15 +3922,69 @@ const ScrollAmount = struct {
 /// negative is always down, left.
 pub fn scrollCallback(
     self: *Surface,
-    xoff: f64,
+    xoff_raw: f64,
     yoff: f64,
     scroll_mods: input.ScrollMods,
 ) !void {
-    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff, yoff, scroll_mods });
+    // log.info("SCROLL: xoff={} yoff={} mods={}", .{ xoff_raw, yoff, scroll_mods });
 
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
+
+    // Trackpad gesture arbitration: a two-finger motion arrives both as raw
+    // touches and as scroll events. If a gesture binding claimed the touch
+    // sequence, this event is the scroll copy of that same motion and must
+    // be dropped. The copy is always precision (it comes from the trackpad),
+    // so non-precision devices - a wheel mouse scrolling while the claimed
+    // fingers are down - pass through untouched. After the fingers lift,
+    // the claim keeps swallowing the sequence's inertial momentum tail
+    // until fresh precision motion releases it. A wheel event passes
+    // without releasing the claim. The lifted sequence's own trailing
+    // event (zero delta, no momentum flag yet) is dropped without
+    // releasing the claim, because its ordering relative to the
+    // gesture-ended callback is not guaranteed.
+    // The claim is app state because the claimed motion doesn't stay on one
+    // surface: a fired tab switch re-routes the sequence's remaining scroll
+    // and its momentum tail to the newly revealed surface.
+    const claim = gestureScrollClaimStep(
+        self.app.gesture_scroll_claim,
+        scroll_mods,
+        xoff_raw,
+        yoff,
+    );
+    self.app.gesture_scroll_claim = claim.claim;
+    if (claim.drop) return;
+
+    // Precise motion held with a gesture modifier belongs to the gesture
+    // layer from its very first frame: the modifier declared the motion is
+    // aimed at the terminal before it moved, so its horizontal scroll copy
+    // is never forwarded. This closes the recognizer's commit deadzone,
+    // during which no claim exists yet and the opening of a modified swipe
+    // would otherwise leak to the program as wheel events. The configured
+    // passthrough modifier is exempt, and the vertical axis still scrolls
+    // so modified vertical motion isn't dead input.
+    const xoff: f64 = xoff: {
+        if (!scroll_mods.precision) break :xoff xoff_raw;
+        if (scroll_mods.momentum != .none) break :xoff xoff_raw;
+        const keys = scroll_mods.mods;
+        const held: input.Mods = .{
+            .shift = keys.shift,
+            .ctrl = keys.ctrl,
+            .alt = keys.alt,
+            .super = keys.super,
+        };
+        if (held.empty()) break :xoff xoff_raw;
+        if (scrollPassthroughHeld(self.config.mouse_scroll_passthrough_mod, held)) break :xoff xoff_raw;
+        for ([_]input.Binding.Gesture{ .@"swipe-left", .@"swipe-right" }) |g| {
+            if (self.config.gesture.get(.{
+                .gesture = g,
+                .fingers = 2,
+                .mods = held,
+            }) != null) break :xoff 0;
+        }
+        break :xoff xoff_raw;
+    };
 
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
@@ -3728,12 +4121,24 @@ pub fn scrollCallback(
 
         // If we're scrolling up or down, then send a mouse event.
         if (self.isMouseReporting()) {
+            // The passthrough modifier is stripped only from precision
+            // (trackpad) scrolls: it exists to route trackpad motion past
+            // the gesture engine, and wheel devices never meet that
+            // engine, so their reports keep the held modifiers.
+            const report_mods = if (scroll_mods.precision)
+                scrollPassthroughStrip(
+                    self.config.mouse_scroll_passthrough_mod,
+                    self.mouse.mods,
+                )
+            else
+                self.mouse.mods;
+
             for (0..@abs(y.delta)) |_| {
                 const pos = try self.rt_surface.getCursorPos();
                 self.mouseReport(switch (y.direction()) {
                     .up_right => .four,
                     .down_left => .five,
-                }, .press, self.mouse.mods, pos);
+                }, .press, report_mods, pos);
             }
 
             for (0..@abs(x.delta)) |_| {
@@ -3741,7 +4146,7 @@ pub fn scrollCallback(
                 self.mouseReport(switch (x.direction()) {
                     .up_right => .six,
                     .down_left => .seven,
-                }, .press, self.mouse.mods, pos);
+                }, .press, report_mods, pos);
             }
 
             // If mouse reporting is on, we do not want to scroll the
@@ -6742,5 +7147,126 @@ test "promptClickRelativeRow" {
             pages.pointFromPin(.viewport, prompt) == null,
         );
         try testing.expectEqual(case.expected, promptClickRelativeRow(&pages, prompt, click));
+    }
+}
+
+test "gesture scroll claim" {
+    const testing = std.testing;
+    const wheel: input.ScrollMods = .{};
+    const wheel_inertia: input.ScrollMods = .{ .momentum = .changed };
+    const trackpad: input.ScrollMods = .{ .precision = true };
+    const inertia: input.ScrollMods = .{ .precision = true, .momentum = .changed };
+    const inertia_end: input.ScrollMods = .{ .precision = true, .momentum = .ended };
+    const Case = struct {
+        claim: App.GestureScrollClaim,
+        mods: input.ScrollMods,
+        xoff: f64 = 0,
+        yoff: f64 = 0,
+        expected: GestureScrollClaimStep,
+    };
+    const cases = [_]Case{
+        // No claim: every event passes.
+        .{ .claim = .none, .mods = wheel, .yoff = 1, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = trackpad, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = trackpad, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .none, .mods = inertia, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+
+        // Fingers down: precision events are the claimed motion, wheel
+        // events pass, and nothing changes the claim.
+        .{ .claim = .active, .mods = trackpad, .xoff = 4, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = trackpad, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = inertia, .yoff = 4, .expected = .{ .claim = .active, .drop = true } },
+        .{ .claim = .active, .mods = wheel, .yoff = 1, .expected = .{ .claim = .active, .drop = false } },
+        .{ .claim = .active, .mods = wheel, .expected = .{ .claim = .active, .drop = false } },
+
+        // Momentum tail: inertial and zero-delta events are dropped and
+        // keep the claim, and fresh precision motion releases it.
+        .{ .claim = .momentum, .mods = inertia, .yoff = 4, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = inertia_end, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = wheel_inertia, .yoff = 1, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = trackpad, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = wheel, .expected = .{ .claim = .momentum, .drop = true } },
+        .{ .claim = .momentum, .mods = trackpad, .yoff = 4, .expected = .{ .claim = .none, .drop = false } },
+        .{ .claim = .momentum, .mods = trackpad, .xoff = -4, .expected = .{ .claim = .none, .drop = false } },
+
+        // Momentum tail: a wheel tick passes and the claim holds.
+        .{ .claim = .momentum, .mods = wheel, .yoff = 1, .expected = .{ .claim = .momentum, .drop = false } },
+        .{ .claim = .momentum, .mods = wheel, .xoff = -1, .expected = .{ .claim = .momentum, .drop = false } },
+    };
+    for (cases, 0..) |case, i| {
+        errdefer std.debug.print("gesture scroll claim case {d} failed\n", .{i});
+        try testing.expectEqual(
+            case.expected,
+            gestureScrollClaimStep(case.claim, case.mods, case.xoff, case.yoff),
+        );
+    }
+}
+
+test "swipe arbitration: outcome per rule" {
+    const testing = std.testing;
+    const Case = struct {
+        fingers: u8 = 2,
+        vertical: bool = false,
+        bound: bool = true,
+        force: bool = false,
+        modified: bool = false,
+        swipe_tracking: bool = true,
+        mouse_reporting: bool = false,
+        expected: SwipeArbitration,
+    };
+    const cases = [_]Case{
+        // No binding: nothing fires, whatever else holds.
+        .{ .bound = false, .expected = .unbound },
+        .{ .bound = false, .fingers = 3, .expected = .unbound },
+        .{ .bound = false, .vertical = true, .expected = .unbound },
+        .{ .bound = false, .mouse_reporting = true, .expected = .unbound },
+        .{ .bound = false, .modified = true, .expected = .unbound },
+        .{ .bound = false, .swipe_tracking = false, .expected = .unbound },
+
+        // An unowned horizontal two-finger swipe fires.
+        .{ .expected = .fire },
+
+        // Three or more fingers never scroll, so they always fire.
+        .{ .fingers = 3, .mouse_reporting = true, .expected = .fire },
+        .{ .fingers = 4, .mouse_reporting = true, .expected = .fire },
+        .{ .fingers = 3, .vertical = true, .expected = .fire },
+        .{ .fingers = 4, .vertical = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .fire },
+
+        // Vertical two-finger motion is scroll, ahead of the swipe preference and mouse reporting.
+        .{ .vertical = true, .expected = .skip_vertical_scroll },
+        .{ .vertical = true, .swipe_tracking = false, .expected = .skip_vertical_scroll },
+        .{ .vertical = true, .mouse_reporting = true, .expected = .skip_vertical_scroll },
+
+        // The swipe preference off makes horizontal motion scroll, ahead
+        // of mouse reporting.
+        .{ .swipe_tracking = false, .expected = .skip_swipe_preference },
+        .{ .swipe_tracking = false, .mouse_reporting = true, .expected = .skip_swipe_preference },
+
+        // Mouse reporting gives the motion to the program.
+        .{ .mouse_reporting = true, .expected = .defer_to_program },
+
+        // A modified trigger bypasses every two-finger rule.
+        .{ .modified = true, .vertical = true, .expected = .fire },
+        .{ .modified = true, .swipe_tracking = false, .expected = .fire },
+        .{ .modified = true, .mouse_reporting = true, .expected = .fire },
+        .{ .modified = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .fire },
+
+        // So does `force:`.
+        .{ .force = true, .vertical = true, .expected = .fire },
+        .{ .force = true, .swipe_tracking = false, .expected = .fire },
+        .{ .force = true, .mouse_reporting = true, .expected = .fire },
+        .{ .force = true, .swipe_tracking = false, .mouse_reporting = true, .expected = .fire },
+    };
+    for (cases, 0..) |case, i| {
+        errdefer std.debug.print("swipe arbitration case {d} failed\n", .{i});
+        try testing.expectEqual(case.expected, swipeArbitration(.{
+            .fingers = case.fingers,
+            .vertical = case.vertical,
+            .bound = case.bound,
+            .force = case.force,
+            .modified = case.modified,
+            .swipe_tracking = case.swipe_tracking,
+            .mouse_reporting = case.mouse_reporting,
+        }));
     }
 }

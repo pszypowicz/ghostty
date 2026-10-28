@@ -686,7 +686,10 @@ class QuickTerminalController: BaseTerminalController {
 
     @objc private func onToggleFullscreen(notification: SwiftUI.Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        guard target == self.focusedSurface else { return }
+        // Any surface in this window may toggle fullscreen. Trackpad
+        // gestures dispatch from the surface under the pointer, which is
+        // not necessarily the focused one (see TerminalController.onGotoTab).
+        guard surfaceTree.contains(target) else { return }
         onToggleFullscreen()
     }
 
