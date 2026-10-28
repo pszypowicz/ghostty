@@ -9,6 +9,7 @@ const build_config = @import("../build_config.zig");
 const uucode = @import("uucode");
 const EntryFormatter = @import("../config/formatter.zig").EntryFormatter;
 const deepEqual = @import("../datastruct/comparison.zig").deepEqual;
+const lib = @import("../lib/main.zig");
 const key = @import("key.zig");
 const key_mods = @import("key_mods.zig");
 const KeyEvent = key.KeyEvent;
@@ -1760,6 +1761,12 @@ pub const GesturePhase = enum(c_int) {
     ended,
     cancelled,
 };
+
+test "ghostty.h gesture enums" {
+    try lib.checkGhosttyHEnum(GestureKind, "GHOSTTY_GESTURE_");
+    try lib.checkGhosttyHEnum(GestureDirection, "GHOSTTY_GESTURE_DIRECTION_");
+    try lib.checkGhosttyHEnum(GesturePhase, "GHOSTTY_GESTURE_PHASE_");
+}
 
 /// Parse a single trigger part as a modifier name (including aliases),
 /// returning a Mods value with only that modifier set, or null if the part
