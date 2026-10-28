@@ -89,6 +89,14 @@ font_metrics: font.Metrics,
 /// a specific size.
 font_size_adjusted: bool,
 
+/// The pre-zoom state saved by toggle_font_zoom, set while zoomed and null
+/// otherwise. Only the point size is stored (not the full DesiredSize)
+/// because the DPI may change while zoomed; restoring applies the saved
+/// points at the current DPI. font_size_adjusted is snapshotted alongside
+/// so that a zoom round-trip on a surface that never adjusted its font
+/// size doesn't block config reloads from updating the size.
+font_zoom_baseline: ?struct { points: f32, adjusted: bool } = null,
+
 /// The renderer for this surface.
 renderer: Renderer,
 
@@ -5616,6 +5624,9 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
 
             // Reset font size also resets the manual adjustment state
             self.font_size_adjusted = false;
+
+            // An explicit absolute size discards any pending font zoom.
+            self.font_zoom_baseline = null;
         },
 
         .set_font_size => |points| {
@@ -5627,6 +5638,42 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
 
             // Mark that we manually adjusted the font size
             self.font_size_adjusted = true;
+
+            // An explicit absolute size discards any pending font zoom.
+            self.font_zoom_baseline = null;
+        },
+
+        .toggle_font_zoom => |delta| {
+            if (self.font_zoom_baseline) |baseline| {
+                log.debug("toggle font zoom restore points={d}", .{baseline.points});
+
+                // Apply the saved points at the current DPI, which may have
+                // changed since the zoom started.
+                var size = self.font_size;
+                size.points = baseline.points;
+                try self.setFontSize(size);
+                self.font_size_adjusted = baseline.adjusted;
+                self.font_zoom_baseline = null;
+            } else {
+                // Max delta is somewhat arbitrary.
+                const clamped_delta = @max(0, @min(255, delta));
+
+                log.debug("toggle font zoom in delta={}", .{clamped_delta});
+
+                // Save the baseline even if the new size clamps below so
+                // that toggling back always works.
+                self.font_zoom_baseline = .{
+                    .points = self.font_size.points,
+                    .adjusted = self.font_size_adjusted,
+                };
+
+                var size = self.font_size;
+                size.points = @min(size.points + clamped_delta, 255);
+                try self.setFontSize(size);
+
+                // Mark that we manually adjusted the font size
+                self.font_size_adjusted = true;
+            }
         },
 
         .prompt_surface_title => return try self.rt_app.performAction(
