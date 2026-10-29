@@ -35,6 +35,7 @@ const help_strings = @import("help_strings");
 pub const Command = @import("command.zig").Command;
 const RepeatableReadableIO = @import("io.zig").RepeatableReadableIO;
 const RepeatableStringMap = @import("RepeatableStringMap.zig");
+const Gesturebinds = @import("Gesturebinds.zig");
 pub const Path = @import("path.zig").Path;
 pub const RepeatablePath = @import("path.zig").RepeatablePath;
 const ClipboardCodepointMap = @import("ClipboardCodepointMap.zig");
@@ -971,6 +972,28 @@ palette: Palette = .{},
 ///   * `always`
 ///   * `never`
 @"mouse-shift-capture": MouseShiftCapture = .false,
+
+/// The modifier key that is a message to the terminal itself rather than
+/// to the running program: holding it skips the gesture engine entirely so
+/// the motion flows as plain scrolling, and the modifier is stripped from
+/// any mouse reports the scroll produces, so the program receives clean,
+/// unmodified wheel events (e.g. vim scrolls normally instead of applying
+/// its shift-wheel page scrolling). Use it to reach a program's own
+/// scrolling on an axis whose unmodified motion is bound to a gesture,
+/// e.g. shift plus horizontal two-finger motion for horizontal scrolling.
+///
+/// Only precision (trackpad) scrolling is affected: wheel devices never
+/// meet the gesture engine, so their reports keep the held modifiers.
+/// The default is `shift` on macOS, where the gesture engine runs, and
+/// `none` elsewhere.
+///
+/// Valid values are `none`, `shift`, `ctrl`, `alt`, and `super` (the cmd
+/// key on macOS). With `none`, every bindable modifier is available to
+/// gesture triggers instead.
+@"mouse-scroll-passthrough-mod": ScrollPassthroughMod = switch (builtin.target.os.tag) {
+    .macos => .shift,
+    else => .none,
+},
 
 /// Enable or disable mouse reporting. When set to `false`, mouse events will
 /// not be reported to terminal applications even if they request it. This
@@ -1939,6 +1962,118 @@ class: ?[:0]const u8 = null,
 ///
 /// Key tables are available since Ghostty 1.3.0.
 keybind: Keybinds = .{},
+
+/// Bind a trackpad gesture to a keybind action.
+///
+/// The syntax is `gesture = [mods+]<gesture>[:<fingers>] = [flags:]<action>`,
+/// where `<gesture>` is one of the recognized gestures below and `<action>`
+/// is any keybind action (the same actions available to `keybind`).
+///
+/// Recognized gestures:
+///
+///   * `pinch-in` - Trackpad pinch closed (zoom out).
+///   * `pinch-out` - Trackpad pinch open (zoom in).
+///   * `smart-magnify` - Two-finger double-tap (macOS "smart zoom"). A discrete,
+///     one-shot gesture, so the `once:` prefix is unnecessary.
+///   * `swipe-left`, `swipe-right`, `swipe-up`, `swipe-down` - Directional
+///     multi-finger swipes. The optional `:<fingers>` suffix selects the
+///     finger count (2, 3, or 4) and defaults to 2, e.g. `swipe-left:4`.
+///
+/// Triggers may require modifier keys using the same names and aliases as
+/// `keybind` (e.g. `cmd+swipe-left:2`); the binding then only fires while
+/// those modifiers are held.
+///
+/// Default bindings: pinch is bound to font size (`pinch-out` increases,
+/// `pinch-in` decreases), smart magnify toggles a temporary font zoom
+/// (`toggle_font_zoom:6`: tap to zoom in, tap again to return exactly to
+/// the pre-zoom size; pinch adjustments made while zoomed are kept, the
+/// second tap still restores the pre-zoom size), and two-finger horizontal
+/// swipes switch tabs (`swipe-left:2` is next tab, `swipe-right:2` is
+/// previous tab), following the content metaphor used by Safari. Smart
+/// magnify requires "Smart zoom" to be enabled in macOS System Settings
+/// (Trackpad, Scroll & Zoom). The defaults are safe alongside
+/// scrolling: they defer to programs that enabled mouse reporting (see the
+/// arbitration below), and horizontal two-finger motion has no consumer
+/// anywhere else. Note that macOS system gestures (Mission Control, Spaces)
+/// take precedence over gestures with the same finger count; free them in
+/// System Settings if a three- or four-finger binding doesn't fire.
+///
+/// Because a pinch is a continuous gesture, its action is triggered once per
+/// discrete step as you pinch. For a discrete action (e.g. one that opens a
+/// menu or sends a key sequence), prefix the action with `once:` so it fires a
+/// single time per gesture instead of repeatedly. For example, to open a tmux
+/// session list with a pinch:
+///
+///     gesture = pinch-in = once:text:\x02s
+///
+/// Swipes are discrete: the action fires once when the swipe direction is
+/// recognized, so `once:` is unnecessary.
+///
+/// Two-finger swipes share their physical motion with scrolling, so they are
+/// arbitrated in favor of the running program: a two-finger swipe binding
+/// does not fire while the program has enabled mouse reporting (e.g. tmux
+/// with `mouse on`), and vertical two-finger swipes do not fire at all since
+/// vertical scroll always has a consumer. The macOS trackpad setting "Swipe
+/// between pages" is honored the same way: unless the selected mode includes
+/// two-finger swiping, an unmodified two-finger swipe binding does not fire
+/// and the motion scrolls the program instead. Two kinds of binding skip this
+/// arbitration and always fire: modified triggers (e.g.
+/// `cmd+swipe-left:2`), since a modified motion cannot collide with
+/// anyone's scrolling and is unambiguous intent aimed at the terminal, and
+/// actions prefixed with `force:`, which take the motion away from the
+/// program unconditionally. `force:` only means something on unmodified
+/// two-finger swipes - everywhere else no arbitration exists, so the
+/// flag parses but changes nothing. The horizontal scroll copy of
+/// motion held with a bound modifier is suppressed from its first frame,
+/// so the opening of a modified swipe never leaks to the program. When a
+/// two-finger swipe binding fires, the scroll produced by the same motion
+/// (including its inertial momentum tail) is suppressed.
+///
+/// A held modifier with no matching binding means plain scrolling: the
+/// motion, both axes, flows to the program (or scrollback) untouched. The
+/// modifier configured as `mouse-scroll-passthrough-mod` (shift by
+/// default) is never a gesture modifier at all: holding it always scrolls,
+/// e.g. shift plus horizontal two-finger motion delivers horizontal
+/// scrolling to a program even when the unmodified swipe is bound.
+///
+/// An empty action clears a single binding (e.g. `gesture = pinch-in =`),
+/// `gesture =` alone resets all gesture bindings to the defaults, and
+/// `gesture = clear` removes all gesture bindings.
+///
+/// Trackpad gestures are currently only supported on macOS.
+gesture: Gesturebinds = .{},
+
+/// The amount of trackpad magnification that must accumulate before a pinch
+/// gesture binding fires one step.
+///
+/// A pinch is a continuous gesture: macOS reports incremental magnification
+/// deltas that sum to roughly the fractional size change, and each time they
+/// accumulate to this value one step of the bound action is performed. The
+/// default of `0.1` is about one step per moderate pinch. A smaller value
+/// makes pinch more sensitive (more steps per pinch); a larger value makes it
+/// less sensitive. Values at or below zero are clamped to a small positive
+/// minimum.
+///
+/// This only has an effect on platforms that support trackpad gestures
+/// (currently macOS).
+@"gesture-pinch-step": f64 = 0.1,
+
+/// Show brief feedback when a configured trackpad gesture binding is
+/// deferred to the running program instead of firing. This happens when a
+/// two-finger swipe binding is arbitrated in favor of a program that
+/// enabled mouse reporting (e.g. tmux with `mouse on`); without feedback,
+/// a deferred gesture is indistinguishable from a broken one. The feedback
+/// only ever appears at that exact moment, so it stays invisible in normal
+/// use. Ambient state is already signaled by the pointer shape: an arrow
+/// instead of an I-beam means the program owns the mouse.
+///
+/// If a modified variant of the deferred trigger is configured (e.g.
+/// `cmd+swipe-left:2` alongside `swipe-left:2` - modified triggers bypass
+/// arbitration), the first feedback per app run also teaches the override.
+///
+/// This only has an effect on platforms that support trackpad gestures
+/// (currently macOS).
+@"gesture-deferred-indicator": bool = true,
 
 /// Remap modifier keys within Ghostty. This allows you to swap or reassign
 /// modifier keys at the application level without affecting system-wide
@@ -4079,6 +4214,9 @@ pub fn default(alloc_gpa: Allocator) Allocator.Error!Config {
     // Add our default keybindings
     try result.keybind.init(alloc);
 
+    // Add our default gesture bindings
+    try result.gesture.init(alloc);
+
     // Add our default command palette entries
     try result.@"command-palette-entry".init(alloc);
 
@@ -4915,6 +5053,10 @@ pub fn finalize(self: *Config) !void {
     // Clamp our mouse scroll multiplier
     self.@"mouse-scroll-multiplier".precision = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".precision));
     self.@"mouse-scroll-multiplier".discrete = @min(10_000.0, @max(0.01, self.@"mouse-scroll-multiplier".discrete));
+
+    // Clamp our gesture pinch step to a small positive minimum: the pinch
+    // accumulator loop requires a positive step to make progress.
+    self.@"gesture-pinch-step" = @max(0.001, self.@"gesture-pinch-step");
 
     // Clamp our split opacity
     self.@"unfocused-split-opacity" = @min(1.0, @max(0.15, self.@"unfocused-split-opacity"));
@@ -9374,6 +9516,15 @@ pub const MouseShiftCapture = enum {
     true,
     always,
     never,
+};
+
+/// See mouse-scroll-passthrough-mod
+pub const ScrollPassthroughMod = enum {
+    none,
+    shift,
+    ctrl,
+    alt,
+    super,
 };
 
 /// See mouse-scroll-multiplier

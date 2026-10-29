@@ -364,6 +364,13 @@ pub const Action = union(Key) {
     /// split or the window is fullscreen.
     resize_window: ResizeWindow,
 
+    /// A configured trackpad gesture binding was deliberately not fired
+    /// because the running program owns the motion (e.g. a two-finger swipe
+    /// binding while the program has mouse reporting enabled). The apprt
+    /// should show brief, unobtrusive feedback so the user can tell a
+    /// deferred gesture apart from a broken one.
+    gesture_deferred: GestureDeferred,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -436,6 +443,7 @@ pub const Action = union(Key) {
         copy_title_to_clipboard,
         move_tab_to_new_window,
         resize_window,
+        gesture_deferred,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
@@ -679,6 +687,16 @@ pub const Readonly = enum(c_int) {
     test "ghostty.h Readonly" {
         try lib.checkGhosttyHEnum(Readonly, "GHOSTTY_READONLY_");
     }
+};
+
+/// The context delivered with a gesture_deferred action.
+/// Sync with: ghostty_action_gesture_deferred_s
+pub const GestureDeferred = extern struct {
+    /// The modifier keys of a configured modified variant of the deferred
+    /// trigger (modified triggers bypass gesture arbitration), as
+    /// ghostty_input_mods_e bits, or zero when no such variant exists.
+    /// When non-zero the apprt can teach the override (e.g. "hold cmd").
+    override_mods: c_int = 0,
 };
 
 pub const MouseVisibility = enum(c_int) {

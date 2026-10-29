@@ -1084,6 +1084,30 @@ pub const Surface = struct {
         };
     }
 
+    pub fn gestureCallback(
+        self: *Surface,
+        kind: input.Binding.GestureKind,
+        direction: input.Binding.GestureDirection,
+        fingers: u8,
+        mods: input.Mods,
+        amount: f64,
+        phase: input.Binding.GesturePhase,
+        swipe_tracking: bool,
+    ) void {
+        self.core_surface.gestureCallback(
+            kind,
+            direction,
+            fingers,
+            mods,
+            amount,
+            phase,
+            swipe_tracking,
+        ) catch |err| {
+            log.err("error in gesture callback err={}", .{err});
+            return;
+        };
+    }
+
     pub fn cursorPosCallback(
         self: *Surface,
         x: f64,
@@ -2198,6 +2222,53 @@ pub const CAPI = struct {
     ) void {
         const stage = std.enums.fromInt(input.MousePressureStage, stage_raw) orelse return;
         surface.mousePressureCallback(stage, pressure);
+    }
+
+    export fn ghostty_surface_gesture(
+        surface: *Surface,
+        kind_raw: c_int,
+        direction_raw: c_int,
+        fingers: u8,
+        mods_raw: c_int,
+        amount: f64,
+        phase_raw: c_int,
+        swipe_tracking: bool,
+    ) void {
+        const kind = std.enums.fromInt(
+            input.Binding.GestureKind,
+            kind_raw,
+        ) orelse {
+            log.warn("invalid gesture kind value={}", .{kind_raw});
+            return;
+        };
+        const direction = std.enums.fromInt(
+            input.Binding.GestureDirection,
+            direction_raw,
+        ) orelse {
+            log.warn("invalid gesture direction value={}", .{direction_raw});
+            return;
+        };
+        const phase = std.enums.fromInt(
+            input.Binding.GesturePhase,
+            phase_raw,
+        ) orelse {
+            log.warn("invalid gesture phase value={}", .{phase_raw});
+            return;
+        };
+        const mods: input.Mods = @bitCast(@as(
+            input.Mods.Backing,
+            @truncate(@as(c_uint, @bitCast(mods_raw))),
+        ));
+
+        surface.gestureCallback(
+            kind,
+            direction,
+            fingers,
+            mods,
+            amount,
+            phase,
+            swipe_tracking,
+        );
     }
 
     export fn ghostty_surface_ime_point(

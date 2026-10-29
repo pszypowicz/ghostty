@@ -156,6 +156,27 @@ typedef enum {
 } ghostty_input_mouse_momentum_e;
 
 typedef enum {
+  GHOSTTY_GESTURE_PINCH,
+  GHOSTTY_GESTURE_SMART_MAGNIFY,
+  GHOSTTY_GESTURE_SWIPE,
+} ghostty_input_gesture_e;
+
+typedef enum {
+  GHOSTTY_GESTURE_DIRECTION_NONE,
+  GHOSTTY_GESTURE_DIRECTION_LEFT,
+  GHOSTTY_GESTURE_DIRECTION_RIGHT,
+  GHOSTTY_GESTURE_DIRECTION_UP,
+  GHOSTTY_GESTURE_DIRECTION_DOWN,
+} ghostty_input_gesture_direction_e;
+
+typedef enum {
+  GHOSTTY_GESTURE_PHASE_BEGAN,
+  GHOSTTY_GESTURE_PHASE_CHANGED,
+  GHOSTTY_GESTURE_PHASE_ENDED,
+  GHOSTTY_GESTURE_PHASE_CANCELLED,
+} ghostty_input_gesture_phase_e;
+
+typedef enum {
   GHOSTTY_COLOR_SCHEME_LIGHT = 0,
   GHOSTTY_COLOR_SCHEME_DARK = 1,
 } ghostty_color_scheme_e;
@@ -704,6 +725,14 @@ typedef enum {
   GHOSTTY_READONLY_ON,
 } ghostty_action_readonly_e;
 
+// apprt.action.GestureDeferred
+typedef struct {
+  // ghostty_input_mods_e bits of a configured modified variant of the
+  // deferred trigger (modified triggers bypass gesture arbitration), or
+  // zero when no such variant exists.
+  int override_mods;
+} ghostty_action_gesture_deferred_s;
+
 // apprt.action.DesktopNotification.C
 typedef struct {
   const char* title;
@@ -1016,6 +1045,7 @@ typedef enum {
   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
   GHOSTTY_ACTION_RESIZE_WINDOW,
+  GHOSTTY_ACTION_GESTURE_DEFERRED,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -1060,6 +1090,7 @@ typedef union {
   ghostty_action_search_selected_s search_selected;
   ghostty_action_readonly_e readonly;
   ghostty_action_open_config_e open_config;
+  ghostty_action_gesture_deferred_s gesture_deferred;
 } ghostty_action_u;
 
 typedef struct {
@@ -1218,6 +1249,14 @@ GHOSTTY_API void ghostty_surface_mouse_scroll(ghostty_surface_t,
                                                  double,
                                                  ghostty_input_scroll_mods_t);
 GHOSTTY_API void ghostty_surface_mouse_pressure(ghostty_surface_t, uint32_t, double);
+GHOSTTY_API void ghostty_surface_gesture(ghostty_surface_t,
+                                            ghostty_input_gesture_e,
+                                            ghostty_input_gesture_direction_e,
+                                            uint8_t,
+                                            ghostty_input_mods_e,
+                                            double,
+                                            ghostty_input_gesture_phase_e,
+                                            bool);
 GHOSTTY_API void ghostty_surface_ime_point(ghostty_surface_t, double*, double*, double*, double*);
 GHOSTTY_API void ghostty_surface_request_close(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_split(ghostty_surface_t, ghostty_action_split_direction_e);
